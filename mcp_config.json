@@ -1,0 +1,12 @@
+{
+  "auto_save_message_threshold": 20,
+  "client_paths": {
+    "default": "chats",
+    "cursor": "chats/cursor",
+    "chatgpt": "chats/chatgpt",
+    "claude": "chats/claude"
+  },
+  "compression_days_threshold": 30,
+  "cursor_transcripts_dir": "/Users/guranshbir2012/.cursor/projects/Users-guranshbir2012-Development-Vibe-Coding-Claude-MCP/agent-transcripts",
+  "notes": "Change settings via configure_connector_settings tool."
+}
