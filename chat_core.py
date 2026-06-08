@@ -112,6 +112,18 @@ def _role_prefix(role: str) -> str:
     return "System: "
 
 
+def summarize_text_code_blocks(text: str) -> str:
+    pattern = re.compile(r"```([a-zA-Z0-9+#_-]*)\s*\n(.*?)\n\s*```", re.DOTALL)
+
+    def replacer(match):
+        lang = match.group(1).strip() or "text"
+        code = match.group(2)
+        lines_count = len(code.splitlines())
+        return f"\n[Code Block: {lang}, {lines_count} lines. Re-run tool with summarize_code=False to view full code]\n"
+
+    return pattern.sub(replacer, text)
+
+
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]{3,}", text.lower())
 
@@ -236,14 +248,27 @@ class ChatConnector:
 
     # ── Original tools ────────────────────────────────────────────────────────
 
-    def list_all_stored_chats(self, client: str = "default") -> list[str]:
+    def list_all_stored_chats(
+        self, page: int = 1, per_page: int = 50, client: str = "default"
+    ) -> list[str]:
         try:
             files = self._list_json_files(client)
-            return files if files else ["No stored chats found."]
+            if not files:
+                return ["No stored chats found."]
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            paginated = files[start_idx:end_idx]
+            if not paginated:
+                return [f"Page {page} is empty. Total stored chats: {len(files)}."]
+            total_pages = (len(files) + per_page - 1) // per_page
+            header = f"[Page {page} of {total_pages} (Total chats: {len(files)})]"
+            return [header] + paginated
         except Exception as e:
             return [f"Error listing files: {e}"]
 
-    def search_chats_by_keywords(self, keywords: list[str], client: str = "default") -> list[str]:
+    def search_chats_by_keywords(
+        self, keywords: list[str], limit: int = 50, client: str = "default"
+    ) -> list[str]:
         matching_files: list[tuple[str, int]] = []
         try:
             for file in self._list_json_files(client):
@@ -254,12 +279,25 @@ class ChatConnector:
                 if match_count >= 1:
                     matching_files.append((file, match_count))
             matching_files.sort(key=lambda x: x[1], reverse=True)
-            return [item[0] for item in matching_files] or ["No matching conversations found."]
+            results = [item[0] for item in matching_files]
+            if not results:
+                return ["No matching conversations found."]
+            if len(results) > limit:
+                return results[:limit] + [
+                    f"[System Note: Truncated to first {limit} matches. Specify a higher limit if needed]"
+                ]
+            return results
         except Exception as e:
             return [f"Search error: {e}"]
 
     def read_chat_message_range(
-        self, file_name: str, start_msg: int = 1, end_msg: int = 20, client: str = "default"
+        self,
+        file_name: str,
+        start_msg: int = 1,
+        end_msg: int = 20,
+        max_msg_len: int = 1000,
+        summarize_code: bool = True,
+        client: str = "default",
     ) -> str:
         file_path = self._safe_chat_path(file_name, client)
         if not file_path:
@@ -274,9 +312,23 @@ class ChatConnector:
                 return "This file contains no extractable conversation messages."
             s_idx = max(0, start_msg - 1)
             e_idx = min(total_msgs, end_msg)
+            processed_messages = []
+            for msg in plain_messages[s_idx:e_idx]:
+                prefix_match = re.match(r"^(U: |A: |System: )", msg)
+                prefix = prefix_match.group(0) if prefix_match else ""
+                content = msg[len(prefix):]
+                if summarize_code:
+                    content = summarize_text_code_blocks(content)
+                if max_msg_len > 0 and len(content) > max_msg_len:
+                    content = (
+                        content[:max_msg_len]
+                        + f"\n... [Truncated {len(content) - max_msg_len} characters for token efficiency. Re-run read_chat_message_range with max_msg_len=0 or a larger limit to view full content] ..."
+                    )
+                processed_messages.append(prefix + content)
             output = (
-                f"--- Showing Messages {start_msg} to {e_idx} of {total_msgs} total messages ---\n\n"
-                + "\n".join(plain_messages[s_idx:e_idx])
+                f"--- Showing Messages {start_msg} to {e_idx} of {total_msgs} total messages ---\n"
+                f"[Token efficiency active: summarize_code={summarize_code}, max_msg_len={max_msg_len}]\n\n"
+                + "\n".join(processed_messages)
             )
             if e_idx < total_msgs:
                 output += f"\n\n[System Note: More messages available. Next chunk starts at message {e_idx + 1}]"
@@ -462,7 +514,7 @@ class ChatConnector:
             return [{"file": f"Error: {e}", "score": 0}]
 
     def filter_chats_by_date_range(
-        self, start_date: str, end_date: str, client: str = "default"
+        self, start_date: str, end_date: str, limit: int = 50, client: str = "default"
     ) -> list[dict]:
         try:
             start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -481,7 +533,15 @@ class ChatConnector:
                     "file_name": file,
                     "last_modified": mtime.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 })
-        return results or [{"info": "No chats found in date range."}]
+        if not results:
+            return [{"info": "No chats found in date range."}]
+        if len(results) > limit:
+            return results[:limit] + [
+                {
+                    "info": f"Truncated to first {limit} matches. Specify a higher limit if needed."
+                }
+            ]
+        return results
 
     # ── Automation and workflows ──────────────────────────────────────────────
 
@@ -630,11 +690,16 @@ class ChatConnector:
         except Exception as e:
             return [f"Error: {e}"]
 
-    def build_knowledge_index(self, rebuild: bool = False, client: str = "default") -> dict:
+    def build_knowledge_index(
+        self, rebuild: bool = False, summary_only: bool = False, client: str = "default"
+    ) -> dict:
         if not rebuild and os.path.exists(self.index_path):
             try:
                 with open(self.index_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    index = json.load(f)
+                    if summary_only:
+                        return self._summarize_index(index)
+                    return index
             except Exception:
                 pass
         index: dict[str, list[str]] = {topic: [] for topic in TOPIC_KEYWORDS}
@@ -656,7 +721,22 @@ class ChatConnector:
                 index["untagged"].append(file)
         index["built_at"] = self._now_iso()
         self._write_json(self.index_path, index)
+        if summary_only:
+            return self._summarize_index(index)
         return index
+
+    def _summarize_index(self, index: dict) -> dict:
+        summary = {
+            topic: len(files)
+            for topic, files in index.items()
+            if topic not in ["built_at", "untagged"]
+        }
+        summary["untagged"] = len(index.get("untagged", []))
+        summary["built_at"] = index.get("built_at", "")
+        summary["note"] = (
+            "To retrieve the full file lists for a topic, rebuild/run without summary_only=True"
+        )
+        return summary
 
     def compare_two_chats(self, file_name_a: str, file_name_b: str, client: str = "default") -> str:
         def keywords_for(file_name: str) -> set[str]:

@@ -36,7 +36,7 @@ def ok(tool: str, cond: bool, detail: str) -> None:
 
 # ── 1. Core (4) ─────────────────────────────────────────────────────────────
 
-files = REAL.list_all_stored_chats()
+files = REAL.list_all_stored_chats(per_page=1000)
 ok("list_all_stored_chats", len(files) > 1 and "No stored" not in files[0], f"{len(files)} files")
 
 hits = REAL.search_chats_by_keywords(["mcp", "connector"])

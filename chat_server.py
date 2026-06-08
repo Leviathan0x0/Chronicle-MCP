@@ -9,23 +9,34 @@ cc = get_connector()
 
 
 @mcp.tool()
-def list_all_stored_chats(client: str = "default") -> list[str]:
-    """List all available archive files in the index."""
-    return cc.list_all_stored_chats(client)
+def list_all_stored_chats(
+    page: int = 1, per_page: int = 50, client: str = "default"
+) -> list[str]:
+    """List all available archive files in the index with pagination to save tokens."""
+    return cc.list_all_stored_chats(page, per_page, client)
 
 
 @mcp.tool()
-def search_chats_by_keywords(keywords: list[str], client: str = "default") -> list[str]:
-    """Search conversation archives using thematic keywords."""
-    return cc.search_chats_by_keywords(keywords, client)
+def search_chats_by_keywords(
+    keywords: list[str], limit: int = 50, client: str = "default"
+) -> list[str]:
+    """Search conversation archives using thematic keywords (truncated to limit to save tokens)."""
+    return cc.search_chats_by_keywords(keywords, limit, client)
 
 
 @mcp.tool()
 def read_chat_message_range(
-    file_name: str, start_msg: int = 1, end_msg: int = 20, client: str = "default"
+    file_name: str,
+    start_msg: int = 1,
+    end_msg: int = 20,
+    max_msg_len: int = 1000,
+    summarize_code: bool = True,
+    client: str = "default",
 ) -> str:
-    """Read a specific range of messages from a file."""
-    return cc.read_chat_message_range(file_name, start_msg, end_msg, client)
+    """Read specific messages (summarize_code=True & max_msg_len=1000 active by default to save tokens)."""
+    return cc.read_chat_message_range(
+        file_name, start_msg, end_msg, max_msg_len, summarize_code, client
+    )
 
 
 @mcp.tool()
@@ -93,10 +104,10 @@ def find_related_chats(file_name: str, top_k: int = 5, client: str = "default") 
 
 @mcp.tool()
 def filter_chats_by_date_range(
-    start_date: str, end_date: str, client: str = "default"
+    start_date: str, end_date: str, limit: int = 50, client: str = "default"
 ) -> list[dict]:
     """Filter chats modified between two dates (YYYY-MM-DD)."""
-    return cc.filter_chats_by_date_range(start_date, end_date, client)
+    return cc.filter_chats_by_date_range(start_date, end_date, limit, client)
 
 
 # ── Automation and workflows ────────────────────────────────────────────────
@@ -152,9 +163,11 @@ def extract_action_items(file_name: str, client: str = "default") -> list[str]:
 
 
 @mcp.tool()
-def build_knowledge_index(rebuild: bool = False, client: str = "default") -> dict:
-    """Build or return a topic-tagged index of all stored chats."""
-    return cc.build_knowledge_index(rebuild, client)
+def build_knowledge_index(
+    rebuild: bool = False, summary_only: bool = False, client: str = "default"
+) -> dict:
+    """Build or return a topic-tagged index of stored chats (use summary_only=True to save tokens)."""
+    return cc.build_knowledge_index(rebuild, summary_only, client)
 
 
 @mcp.tool()
