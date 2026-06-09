@@ -1,24 +1,24 @@
 {
-    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-    "name": "io.github.guranshbir2012/chronicle-mcp",
-    "description": "Universal local chat history archive connector for MCP clients. Formats, cleans, parses, and indexes ChatGPT, Claude, and IDE transcripts locally to save up to 40% context tokens.",
-    "repository": {
-        "url": "https://github.com/Leviathan0x0/Chronicle-MCP",
-        "source": "github"
-    },
-    "version": "1.0.0",
-    "license": "MIT",
-    "packages": [
-        {
-            "registryType": "git",
-            "identifier": "https://github.com/Leviathan0x0/Chronicle-MCP",
-            "version": "1.0.0",
-            "transport": {
-                "type": "stdio"
-            },
-            "installation": {
-                "uv": "uvx --from git+https://github.com/Leviathan0x0/Chronicle-MCP chronicle-mcp"
-            }
-        }
-    ]
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.guranshbir2012/chronicle-mcp",
+  "description": "Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.",
+  "repository": {
+    "url": "https://github.com/Leviathan0x0/Chronicle-MCP",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "license": "MIT",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "chronicle-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "installation": {
+        "uv": "uvx --from git+https://github.com/Leviathan0x0/Chronicle-MCP chronicle-mcp"
+      }
+    }
+  ]
 }
