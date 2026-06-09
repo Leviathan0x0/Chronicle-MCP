@@ -142,6 +142,8 @@ Chronicle has 25 tools to help your AI manage chats:
 
 ## Connecting to Your AI
 
+Note: You must change `/absolute/path/to/` in the commands below to the actual folder path where you saved the files on your computer.
+
 ### Claude Code
 Run this command in your terminal:
 
