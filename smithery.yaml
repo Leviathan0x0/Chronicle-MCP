@@ -1,7 +1,0 @@
-id: chronicle-mcp
-version: 1.0.0
-language: python
-entrypoint: chat_server.py
-dependencies:
-  pip:
-    - mcp>=1.0.0
