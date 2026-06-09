@@ -4,6 +4,8 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+Chronicle is available for direct, one-click installation on the Model Context Protocol (MCP) Marketplace. Under this installation, you can connect your preferred AI client directly without manual directory setup.
+
 Chronicle (Universal Chat Connector) is a premium Model Context Protocol (MCP) server designed to act as a unified bridge between your AI development environments (such as Cursor, Claude Code, and ChatGPT) and your persistent local conversation history. It empowers LLM agents to index, search, compare, export, and extract knowledge or action items from your past coding sessions.
 
 ---
