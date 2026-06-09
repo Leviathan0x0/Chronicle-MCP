@@ -2,8 +2,20 @@ import json
 import os
 import re
 
-# Your chats folder path
-CHATS_DIR = "/Users/guranshbir2012/Development/Vibe Coding/Claude-MCP/chats"
+import sys
+
+# Your chats folder path (resolves dynamically or accepts argv)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+default_base = os.environ.get("CHRONICLE_BASE_DIR") or os.path.expanduser("~/.chronicle")
+if os.path.exists(os.path.join(script_dir, ".git")):
+    default_base = script_dir
+
+default_chats_dir = os.path.join(default_base, "chats")
+
+if len(sys.argv) > 1:
+    CHATS_DIR = sys.argv[1]
+else:
+    CHATS_DIR = default_chats_dir
 
 # The name of your big export file (Change this if yours is named differently, like 'chats.json')
 SOURCE_FILE_NAME = "conversations.json"
