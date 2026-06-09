@@ -1,8 +1,18 @@
 from mcp.server.fastmcp import FastMCP
+from mcp.types import Icon
 
 from chat_core import get_connector
 
-mcp = FastMCP("Universal Chat Connector")
+mcp = FastMCP(
+    "Universal Chat Connector",
+    website_url="https://github.com/Leviathan0x0/Chronicle-MCP",
+    icons=[
+        Icon(
+            src="https://raw.githubusercontent.com/Leviathan0x0/Chronicle-MCP/main/assets/logo.png",
+            mimeType="image/png"
+        )
+    ]
+)
 cc = get_connector()
 
 # ── Core tools ──────────────────────────────────────────────────────────────

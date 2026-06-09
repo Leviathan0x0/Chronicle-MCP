@@ -1,5 +1,9 @@
 # Chronicle (Universal Chat Connector)
 
+<p align="center">
+  <img src="assets/logo.png" alt="Chronicle Logo" width="400"/>
+</p>
+
 Chronicle is a tool that links your AI assistants (like ChatGPT or Claude) to your local saved chats. It helps the AI find, search, compare, and copy your past conversations.
 
 Chronicle is on the MCP Marketplace. You can install it with one click there to connect your AI directly.
