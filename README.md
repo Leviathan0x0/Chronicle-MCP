@@ -189,3 +189,5 @@ python3 test_all_tools.py
 ## License
 
 This project uses the MIT License. See the LICENSE file for details.
+
+<!-- mcp-name: io.github.guranshbir2012/chronicle-mcp -->
