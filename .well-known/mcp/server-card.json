@@ -1,0 +1,146 @@
+{
+    "mcp": "1.0.0",
+    "name": "Chronicle (Universal Chat Connector)",
+    "version": "1.0.0",
+    "description": "Universal local chat history archive connector for MCP clients. Formats, cleans, parses, and indexes ChatGPT, Claude, and IDE transcripts locally.",
+    "capabilities": {
+        "tools": true
+    },
+    "tools": [
+        {
+            "name": "list_all_stored_chats",
+            "description": "List all available archive files in the index with pagination to save tokens.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "default": 1
+                    },
+                    "per_page": {
+                        "type": "integer",
+                        "default": 50
+                    },
+                    "client": {
+                        "type": "string",
+                        "default": "default"
+                    }
+                }
+            }
+        },
+        {
+            "name": "search_chats_by_keywords",
+            "description": "Search conversation archives using thematic keywords (truncated to limit to save tokens).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "keywords": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50
+                    },
+                    "client": {
+                        "type": "string",
+                        "default": "default"
+                    }
+                },
+                "required": [
+                    "keywords"
+                ]
+            }
+        },
+        {
+            "name": "read_chat_message_range",
+            "description": "Read specific messages (summarize_code=True & max_msg_len=1000 active by default to save tokens).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_name": {
+                        "type": "string"
+                    },
+                    "start_msg": {
+                        "type": "integer",
+                        "default": 1
+                    },
+                    "end_msg": {
+                        "type": "integer",
+                        "default": 20
+                    },
+                    "max_msg_len": {
+                        "type": "integer",
+                        "default": 1000
+                    },
+                    "summarize_code": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "client": {
+                        "type": "string",
+                        "default": "default"
+                    }
+                },
+                "required": [
+                    "file_name"
+                ]
+            }
+        },
+        {
+            "name": "search_chats_semantic",
+            "description": "Search archives using TF-IDF semantic similarity (no API key required).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 10
+                    },
+                    "client": {
+                        "type": "string",
+                        "default": "default"
+                    }
+                },
+                "required": [
+                    "query"
+                ]
+            }
+        },
+        {
+            "name": "sync_agent_transcripts",
+            "description": "Sync external agent/client transcripts (JSON, JSONL, or MD) to a client folder.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "client": {
+                        "type": "string"
+                    },
+                    "source_dir": {
+                        "type": "string"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50
+                    }
+                },
+                "required": [
+                    "client"
+                ]
+            }
+        },
+        {
+            "name": "get_server_capabilities",
+            "description": "List all available tools, transports, and feature categories.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    ]
+}
