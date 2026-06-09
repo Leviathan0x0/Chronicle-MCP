@@ -220,7 +220,12 @@ def parse_to_plain_text(chat_data: dict | list) -> list[str]:
         for msg in raw_msgs:
             if not isinstance(msg, dict):
                 continue
-            role = msg.get("role") or msg.get("author", {}).get("role") or "user"
+            role = msg.get("role") or msg.get("author", {}).get("role") or msg.get("sender") or "user"
+            role_str = str(role).lower()
+            if role_str in ["human", "user", "u"]:
+                role = "user"
+            elif role_str in ["assistant", "model", "ai", "a"]:
+                role = "assistant"
             content = msg.get("content") or msg.get("text") or ""
             if isinstance(content, list):
                 text_parts = []
