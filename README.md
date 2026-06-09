@@ -4,6 +4,9 @@ Chronicle is a tool that links your AI assistants (like ChatGPT or Claude) to yo
 
 Chronicle is on the MCP Marketplace. You can install it with one click there to connect your AI directly.
 
+### NOTE:
+Please give this repository a star if you used it so I can claim the special offers that are given to open-source contributers.
+
 ---
 
 ## What Chronicle Does
