@@ -12,7 +12,8 @@ Please give this repository a star if you used it so I can claim the special off
 ## What Chronicle Does
 
 - **Client Folders**: Keeps your saved chats organized in folders for different AIs like ChatGPT or Claude.
-- **Easy Search**: Helps the AI search your past chats using simple keywords or by looking for similar meanings.
+- **Special Search**: Helps the AI find past chats by searching for similar meanings and not just exact matching words. You can also search for files saved between certain dates or group files by topic.
+- **Token Efficiency**: Hides large chunks of code or shortens very long messages when reading past chats. This helps save data limits and keeps the AI fast.
 - **Smart Helpers**: Helps the AI find tasks, summarize conversations, and compare chats.
 - **Auto Saving**: Saves your active chats automatically when they get long.
 - **Clean Storage**: Finds and deletes duplicate files and shrinks old files to save disk space.
