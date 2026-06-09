@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.guranshbir2012/chronicle-mcp",
+  "name": "io.github.Leviathan0x0/chronicle-mcp",
   "description": "Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.",
   "repository": {
     "url": "https://github.com/Leviathan0x0/Chronicle-MCP",
