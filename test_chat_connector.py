@@ -156,7 +156,7 @@ class ChatConnectorTests(unittest.TestCase):
         self.assertEqual(len(dry["duplicates"]), 1)
 
         caps = self.cc.get_server_capabilities()
-        self.assertEqual(caps["total_tools"], 24)
+        self.assertEqual(caps["total_tools"], 25)
         self.assertIn("intelligence", caps["tool_categories"])
 
     def test_client_paths(self):
@@ -202,6 +202,24 @@ class ChatConnectorTests(unittest.TestCase):
         plain = parse_to_plain_text(data)
         self.assertEqual(len(plain), 2)
         self.assertTrue(plain[0].startswith("U:"))
+
+    def test_sync_agent_transcripts_universal(self):
+        import shutil
+        trans_dir = tempfile.mkdtemp()
+        with open(os.path.join(trans_dir, "t1.json"), "w", encoding="utf-8") as f:
+            json.dump({"messages": [{"role": "user", "content": "hello from json"}]}, f)
+        with open(os.path.join(trans_dir, "t2.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"role": "assistant", "content": "hello from jsonl"}) + "\n")
+        with open(os.path.join(trans_dir, "t3.md"), "w", encoding="utf-8") as f:
+            f.write("## User\nhello from md\n")
+        res = self.cc.sync_agent_transcripts("continue", source_dir=trans_dir, limit=5)
+        self.assertEqual(res["total_scanned"], 3)
+        self.assertEqual(len(res["imported"]), 3)
+        files = self.cc.list_all_stored_chats(client="continue")
+        self.assertTrue(any("continue_t1" in f for f in files))
+        self.assertTrue(any("continue_t2" in f for f in files))
+        self.assertTrue(any("continue_t3" in f for f in files))
+        shutil.rmtree(trans_dir, ignore_errors=True)
 
     def test_security_path_traversal(self):
         result = self.cc.read_chat_message_range("../secrets.json")

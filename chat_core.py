@@ -22,30 +22,138 @@ def get_default_base_dir() -> str:
     return os.path.expanduser("~/.chronicle")
 
 
-def resolve_default_cursor_transcripts() -> str:
-    if os.environ.get("CURSOR_TRANSCRIPTS_DIR"):
-        return os.environ["CURSOR_TRANSCRIPTS_DIR"]
+def resolve_default_transcripts_dir(client: str) -> str:
+    if os.environ.get("TRANSCRIPTS_DIR"):
+        return os.environ["TRANSCRIPTS_DIR"]
     home = os.path.expanduser("~")
-    cursor_projects_dir = os.path.join(home, ".cursor", "projects")
-    if os.path.isdir(cursor_projects_dir):
-        transcripts_dirs = []
+    if client == "cursor":
+        cursor_projects_dir = os.path.join(home, ".cursor", "projects")
+        if os.path.isdir(cursor_projects_dir):
+            transcripts_dirs = []
+            try:
+                for d in os.listdir(cursor_projects_dir):
+                    proj_path = os.path.join(cursor_projects_dir, d)
+                    if os.path.isdir(proj_path):
+                        trans_path = os.path.join(proj_path, "agent-transcripts")
+                        if os.path.isdir(trans_path):
+                            transcripts_dirs.append((trans_path, os.path.getmtime(trans_path)))
+            except Exception:
+                pass
+            if transcripts_dirs:
+                transcripts_dirs.sort(key=lambda x: x[1], reverse=True)
+                return transcripts_dirs[0][0]
+        return os.path.join(home, ".cursor-transcripts")
+    elif client == "continue":
+        continue_dir = os.path.join(home, ".continue", "dev_data", "history")
+        if os.path.isdir(continue_dir):
+            return continue_dir
+        return os.path.join(home, ".continue-transcripts")
+    elif client == "cline":
+        vscode_dirs = [
+            os.path.join(home, "Library", "Application Support", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"),
+            os.path.join(home, ".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings"),
+        ]
+        for d in vscode_dirs:
+            if os.path.isdir(d):
+                return d
+        return os.path.join(home, ".cline-transcripts")
+    elif client == "copilot":
+        return os.path.join(home, ".copilot-transcripts")
+    return os.path.join(home, f".{client}-transcripts")
+
+
+def parse_external_transcript(file_path: str) -> list[dict] | None:
+    """Parse an external transcript file (JSON, JSONL, or MD) into standard messages."""
+    if file_path.endswith(".jsonl"):
+        messages = []
         try:
-            for d in os.listdir(cursor_projects_dir):
-                proj_path = os.path.join(cursor_projects_dir, d)
-                if os.path.isdir(proj_path):
-                    trans_path = os.path.join(proj_path, "agent-transcripts")
-                    if os.path.isdir(trans_path):
-                        transcripts_dirs.append((trans_path, os.path.getmtime(trans_path)))
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = json.loads(line)
+                    if isinstance(entry, dict):
+                        role = entry.get("role") or entry.get("sender") or "user"
+                        content = entry.get("content") or entry.get("text") or ""
+                        if content:
+                            messages.append({"role": str(role), "content": str(content)})
+            return messages if messages else None
         except Exception:
-            pass
-        if transcripts_dirs:
-            transcripts_dirs.sort(key=lambda x: x[1], reverse=True)
-            return transcripts_dirs[0][0]
-    return os.path.join(home, ".cursor-transcripts")
+            return None
+
+    elif file_path.endswith(".json"):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                messages = []
+                for item in data:
+                    if isinstance(item, dict):
+                        role = item.get("role") or item.get("sender") or "user"
+                        content = item.get("content") or item.get("text") or ""
+                        if content:
+                            messages.append({"role": str(role), "content": str(content)})
+                return messages if messages else None
+            elif isinstance(data, dict):
+                for key in ["messages", "history", "chat_messages", "sessions"]:
+                    if key in data and isinstance(data[key], list):
+                        messages = []
+                        for item in data[key]:
+                            if isinstance(item, dict):
+                                role = item.get("role") or item.get("sender") or "user"
+                                content = item.get("content") or item.get("text") or ""
+                                if content:
+                                    messages.append({"role": str(role), "content": str(content)})
+                        return messages if messages else None
+        except Exception:
+            return None
+
+    elif file_path.endswith(".md"):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            lines = text.splitlines()
+            messages = []
+            current_role = None
+            current_content = []
+            for line in lines:
+                role_match = re.match(
+                    r"^(?:\#+\s*|[\*\#\_\s]*)(User|Assistant|System|Human|AI)[\*\#\_\s]*[:\-]?\s*$",
+                    line,
+                    re.IGNORECASE,
+                )
+                if role_match:
+                    if current_role and current_content:
+                        messages.append({
+                            "role": current_role,
+                            "content": "\n".join(current_content).strip(),
+                        })
+                    role_str = role_match.group(1).lower()
+                    if role_str in ["user", "human"]:
+                        current_role = "user"
+                    elif role_str in ["assistant", "ai"]:
+                        current_role = "assistant"
+                    else:
+                        current_role = "system"
+                    current_content = []
+                else:
+                    if current_role:
+                        current_content.append(line)
+            if current_role and current_content:
+                messages.append({
+                    "role": current_role,
+                    "content": "\n".join(current_content).strip(),
+                })
+            return messages if messages else None
+        except Exception:
+            return None
+    return None
 
 
 DEFAULT_BASE_DIR = get_default_base_dir()
-DEFAULT_CURSOR_TRANSCRIPTS = resolve_default_cursor_transcripts()
+DEFAULT_CURSOR_TRANSCRIPTS = resolve_default_transcripts_dir("cursor")
+
 
 TOPIC_KEYWORDS: dict[str, list[str]] = {
     "mcp": ["mcp", "model context protocol", "connector", "stdio"],
@@ -211,6 +319,10 @@ class ChatConnector:
             },
             "compression_days_threshold": 30,
             "cursor_transcripts_dir": self.cursor_transcripts_dir,
+            "transcripts_dirs": {
+                c: resolve_default_transcripts_dir(c)
+                for c in ["cursor", "continue", "cline", "copilot"]
+            },
             "notes": "Change settings via configure_connector_settings tool.",
         }
         if not os.path.exists(self.config_path):
@@ -656,48 +768,64 @@ class ChatConnector:
         except Exception as e:
             return f"Import error: {e}"
 
-    def sync_cursor_agent_transcripts(self, limit: int = 50) -> dict:
-        transcripts_dir = self.load_config().get("cursor_transcripts_dir", self.cursor_transcripts_dir)
-        if not os.path.isdir(transcripts_dir):
-            return {"error": f"Transcripts dir not found: {transcripts_dir}", "imported": []}
+    def sync_agent_transcripts(
+        self, client: str, source_dir: str | None = None, limit: int = 50
+    ) -> dict:
+        config = self.load_config()
+        if source_dir:
+            src_dir = source_dir
+        else:
+            src_dir = config.get("transcripts_dirs", {}).get(client) or resolve_default_transcripts_dir(client)
+        if not os.path.isdir(src_dir):
+            return {
+                "error": f"Transcripts directory for '{client}' not found: {src_dir}",
+                "imported": [],
+            }
         imported = []
         errors = []
-        files = sorted(
-            [f for f in os.listdir(transcripts_dir) if f.endswith(".jsonl")],
-            key=lambda f: os.path.getmtime(os.path.join(transcripts_dir, f)),
-            reverse=True,
-        )[:limit]
-        for file in files:
-            src = os.path.join(transcripts_dir, file)
+        try:
+            candidates = sorted(
+                [f for f in os.listdir(src_dir) if f.endswith((".json", ".jsonl", ".md"))],
+                key=lambda f: os.path.getmtime(os.path.join(src_dir, f)),
+                reverse=True,
+            )[:limit]
+        except Exception as e:
+            return {"error": f"Failed to list transcripts: {e}", "imported": []}
+        for file in candidates:
+            src_path = os.path.join(src_dir, file)
             try:
-                messages = []
-                with open(src, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        entry = json.loads(line)
-                        role = entry.get("role", "user")
-                        content = entry.get("content") or entry.get("text") or ""
-                        if content:
-                            messages.append({"role": role, "content": content})
-                title = f"cursor_{os.path.splitext(file)[0][:40]}"
+                messages = parse_external_transcript(src_path)
+                if not messages:
+                    continue
+                title = f"{client}_{os.path.splitext(file)[0][:40]}"
                 dest_name = sanitize_filename(title)
-                dest = os.path.join(self.resolve_chats_dir("cursor"), f"{dest_name}.json")
+                dest = os.path.join(self.resolve_chats_dir(client), f"{dest_name}.json")
                 if os.path.exists(dest):
                     imported.append({"file": file, "status": "skipped_exists"})
                     continue
                 payload = {
                     "title": title,
                     "messages": messages,
-                    "source": "cursor_agent_transcript",
+                    "source": f"{client}_agent_transcript",
                     "synced_at": self._now_iso(),
                 }
                 self._write_json(dest, payload)
-                imported.append({"file": file, "status": "imported", "dest": f"{dest_name}.json"})
+                imported.append({
+                    "file": file,
+                    "status": "imported",
+                    "dest": f"{dest_name}.json",
+                })
             except Exception as e:
                 errors.append({"file": file, "error": str(e)})
-        return {"imported": imported, "errors": errors, "total_scanned": len(files)}
+        return {"imported": imported, "errors": errors, "total_scanned": len(candidates)}
+
+    def sync_cursor_agent_transcripts(self, limit: int = 50) -> dict:
+        """Deprecated: use sync_agent_transcripts(client='cursor') instead."""
+        config = self.load_config()
+        cursor_override = config.get("cursor_transcripts_dir")
+        if cursor_override and cursor_override != DEFAULT_CURSOR_TRANSCRIPTS:
+            return self.sync_agent_transcripts("cursor", source_dir=cursor_override, limit=limit)
+        return self.sync_agent_transcripts("cursor", limit=limit)
 
     # ── Intelligence layer ──────────────────────────────────────────────────
 
@@ -825,6 +953,7 @@ class ChatConnector:
             "client_paths",
             "compression_days_threshold",
             "cursor_transcripts_dir",
+            "transcripts_dirs",
         }
         updates = {k: v for k, v in settings.items() if k in allowed}
         if not updates:
@@ -910,6 +1039,7 @@ class ChatConnector:
                     "watch_chats_folder",
                     "import_chat_from_content",
                     "import_chat_from_local_path",
+                    "sync_agent_transcripts",
                     "sync_cursor_agent_transcripts",
                 ],
                 "intelligence": [
@@ -926,7 +1056,7 @@ class ChatConnector:
                 ],
             },
             "client_paths": self.load_config().get("client_paths", {}),
-            "total_tools": 24,
+            "total_tools": 25,
         }
 
 

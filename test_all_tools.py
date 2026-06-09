@@ -116,6 +116,9 @@ else:
 sync = REAL.sync_cursor_agent_transcripts(limit=3)
 ok("sync_cursor_agent_transcripts", "imported" in sync or "error" in sync, str(sync)[:100])
 
+sync_uni = REAL.sync_agent_transcripts("cursor", limit=3)
+ok("sync_agent_transcripts", "imported" in sync_uni or "error" in sync_uni, str(sync_uni)[:100])
+
 # ── 5. Intelligence (4) ───────────────────────────────────────────────────
 
 task_file = None
@@ -161,7 +164,7 @@ dedupe = TEST.deduplicate_stored_chats(dry_run=True)
 ok("deduplicate_stored_chats", len(dedupe.get("duplicates", [])) >= 1, str(dedupe))
 
 caps = REAL.get_server_capabilities()
-ok("get_server_capabilities", caps.get("total_tools") == 24, f"{caps['total_tools']} tools")
+ok("get_server_capabilities", caps.get("total_tools") == 25, f"{caps['total_tools']} tools")
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 

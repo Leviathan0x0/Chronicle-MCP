@@ -148,6 +148,14 @@ def import_chat_from_local_path(
 
 
 @mcp.tool()
+def sync_agent_transcripts(
+    client: str, source_dir: str | None = None, limit: int = 50
+) -> dict:
+    """Sync external agent/client transcripts (JSON, JSONL, or MD) to a client folder."""
+    return cc.sync_agent_transcripts(client, source_dir, limit)
+
+
+@mcp.tool()
 def sync_cursor_agent_transcripts(limit: int = 50) -> dict:
     """Import Cursor agent transcript JSONL files into the cursor client folder."""
     return cc.sync_cursor_agent_transcripts(limit)

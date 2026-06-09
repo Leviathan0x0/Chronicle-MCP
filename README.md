@@ -20,14 +20,14 @@
 
 ## 🛠️ Tool Architecture & Layout
 
-Chronicle registers **24 specialized tools** divided into logical operational layers:
+Chronicle registers **25 specialized tools** divided into logical operational layers:
 
 | Layer | Tools | Description |
 | :--- | :--- | :--- |
 | **📦 Core** | `list_all_stored_chats`, `search_chats_by_keywords`, `read_chat_message_range`, `save_current_conversation_state` | Basic archive operations and reading log segments. |
 | **🛡️ High Impact** | `delete_stored_chat`, `get_chat_metadata`, `merge_conversation_into_archive`, `export_chat_as_markdown` | State modification, metadata reading, and Markdown exporting. |
 | **🔍 Search & Retrieval** | `search_chats_semantic`, `get_chat_summary`, `find_related_chats`, `filter_chats_by_date_range` | Semantic querying, summarization, and time-based filtering. |
-| **⚙️ Automation** | `register_session_for_auto_save`, `trigger_auto_save_on_session_end`, `watch_chats_folder`, `import_chat_from_content`, `import_chat_from_local_path`, `sync_cursor_agent_transcripts` | Automated sync, directory monitoring, and transcript imports. |
+| **⚙️ Automation** | `register_session_for_auto_save`, `trigger_auto_save_on_session_end`, `watch_chats_folder`, `import_chat_from_content`, `import_chat_from_local_path`, `sync_agent_transcripts`, `sync_cursor_agent_transcripts` | Automated sync, directory monitoring, and universal agent transcript imports. |
 | **🧠 Intelligence** | `extract_action_items`, `build_knowledge_index`, `compare_two_chats`, `generate_project_brief_from_chats` | High-level synthesis, comparisons, and knowledge base compiling. |
 | **🔧 Ops** | `configure_connector_settings`, `compress_old_chat_archives`, `deduplicate_stored_chats`, `get_server_capabilities` | Configuration, compression tasks, and server info. |
 
@@ -60,7 +60,7 @@ pip install -r requirements.txt
 
 ## ⚙️ Configuration
 
-The server reads configuration settings from [mcp_config.json](file:///Users/guranshbir2012/Development/Vibe%20Coding/Claude-MCP/mcp_config.json). You can modify settings directly in the JSON file or programmatically via the `configure_connector_settings` tool:
+The server reads configuration settings from `mcp_config.json`. You can modify settings directly in the JSON file or programmatically via the `configure_connector_settings` tool:
 
 ```json
 {
@@ -72,7 +72,13 @@ The server reads configuration settings from [mcp_config.json](file:///Users/gur
     "claude": "chats/claude"
   },
   "compression_days_threshold": 30,
-  "cursor_transcripts_dir": "~/.cursor/projects/.../agent-transcripts"
+  "cursor_transcripts_dir": "~/.cursor/projects/.../agent-transcripts",
+  "transcripts_dirs": {
+    "cursor": "~/.cursor/projects/.../agent-transcripts",
+    "continue": "~/.continue/dev_data/history",
+    "cline": "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings",
+    "copilot": "~/.copilot-transcripts"
+  }
 }
 ```
 
@@ -101,7 +107,7 @@ Register the command inside your Cursor MCP settings (`Settings -> Features -> M
 
 ## 🧪 Verification & Development
 
-You can run the full test suite to verify all 24 tools and 27 integration points:
+You can run the full test suite to verify all 25 tools and 28 integration points:
 
 ```bash
 python3 test_all_tools.py
