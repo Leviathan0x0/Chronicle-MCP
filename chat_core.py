@@ -215,7 +215,7 @@ def parse_to_plain_text(chat_data: dict | list) -> list[str]:
                 )
             if text.strip():
                 messages.append(f"{_role_prefix(role)}{text.strip()}")
-    elif isinstance(chat_data, dict) and "messages" in chat_data or isinstance(chat_data, list):
+    elif (isinstance(chat_data, dict) and "messages" in chat_data) or isinstance(chat_data, list):
         raw_msgs = chat_data.get("messages", chat_data) if isinstance(chat_data, dict) else chat_data
         for msg in raw_msgs:
             if not isinstance(msg, dict):

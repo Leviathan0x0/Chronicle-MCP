@@ -31,6 +31,7 @@ def sanitize_filename(name: str) -> str:
     return safe_name.strip()[:100]
 
 def split_chats():
+    os.makedirs(CHATS_DIR, exist_ok=True)
     if not os.path.exists(SOURCE_FILE_PATH):
         print(f"Error: Could not find the source file at {SOURCE_FILE_PATH}")
         return
