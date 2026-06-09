@@ -86,7 +86,7 @@ The server reads configuration settings from `mcp_config.json`. You can modify s
 
 ## 🔌 Integrating with AI Clients
 
-### Google AntiGravity IDE
+### Google Antigravity IDE
 Simply search for the directory or configuration within the **MCP Store** in AntiGravity or register it manually.
 
 ### Claude Code
