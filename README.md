@@ -142,19 +142,29 @@ Chronicle has 25 tools to help your AI manage chats:
 
 ## Connecting to Your AI
 
-Note: You must change `/absolute/path/to/` in the commands below to the actual folder path where you saved the files on your computer.
-
 ### Claude Code
-Run this command in your terminal:
+
+If you downloaded the code manually, run this command in your terminal. Note: You must change `/absolute/path/to/` to the actual folder path where you saved the files on your computer.
 
 ```bash
 claude mcp add-json chronicle '{"command": "python3", "args": ["/absolute/path/to/Chronicle-MCP/chat_server.py"]}'
 ```
 
+If you installed the tool via the marketplace or npm, you do not need to use a folder path. Run this command instead:
+
+```bash
+claude mcp add-json chronicle '{"command": "npx", "args": ["-y", "chronicle-mcp"]}'
+```
+
 ### Cursor or VS Code
-Go to Cursor settings, find the MCP section, and add a command tool:
+
+If you downloaded the code manually, go to Cursor settings, find the MCP section, and add a command tool:
 - Name: Chronicle
 - Command: `python3 /absolute/path/to/Chronicle-MCP/chat_server.py`
+
+If you installed the tool via the marketplace or npm, add this command instead:
+- Name: Chronicle
+- Command: `npx -y chronicle-mcp`
 
 ---
 
