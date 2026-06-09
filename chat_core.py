@@ -13,11 +13,39 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-DEFAULT_BASE_DIR = "/Users/guranshbir2012/Development/Vibe Coding/Claude-MCP"
-DEFAULT_CURSOR_TRANSCRIPTS = (
-    "/Users/guranshbir2012/.cursor/projects/"
-    "Users-guranshbir2012-Development-Vibe-Coding-Claude-MCP/agent-transcripts"
-)
+def get_default_base_dir() -> str:
+    if os.environ.get("CHRONICLE_BASE_DIR"):
+        return os.environ["CHRONICLE_BASE_DIR"]
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists(os.path.join(script_dir, ".git")):
+        return script_dir
+    return os.path.expanduser("~/.chronicle")
+
+
+def resolve_default_cursor_transcripts() -> str:
+    if os.environ.get("CURSOR_TRANSCRIPTS_DIR"):
+        return os.environ["CURSOR_TRANSCRIPTS_DIR"]
+    home = os.path.expanduser("~")
+    cursor_projects_dir = os.path.join(home, ".cursor", "projects")
+    if os.path.isdir(cursor_projects_dir):
+        transcripts_dirs = []
+        try:
+            for d in os.listdir(cursor_projects_dir):
+                proj_path = os.path.join(cursor_projects_dir, d)
+                if os.path.isdir(proj_path):
+                    trans_path = os.path.join(proj_path, "agent-transcripts")
+                    if os.path.isdir(trans_path):
+                        transcripts_dirs.append((trans_path, os.path.getmtime(trans_path)))
+        except Exception:
+            pass
+        if transcripts_dirs:
+            transcripts_dirs.sort(key=lambda x: x[1], reverse=True)
+            return transcripts_dirs[0][0]
+    return os.path.join(home, ".cursor-transcripts")
+
+
+DEFAULT_BASE_DIR = get_default_base_dir()
+DEFAULT_CURSOR_TRANSCRIPTS = resolve_default_cursor_transcripts()
 
 TOPIC_KEYWORDS: dict[str, list[str]] = {
     "mcp": ["mcp", "model context protocol", "connector", "stdio"],
