@@ -1,0 +1,9 @@
+LICENSE
+README.md
+pyproject.toml
+chronicle_mcp_server.egg-info/PKG-INFO
+chronicle_mcp_server.egg-info/SOURCES.txt
+chronicle_mcp_server.egg-info/dependency_links.txt
+chronicle_mcp_server.egg-info/entry_points.txt
+chronicle_mcp_server.egg-info/requires.txt
+chronicle_mcp_server.egg-info/top_level.txt

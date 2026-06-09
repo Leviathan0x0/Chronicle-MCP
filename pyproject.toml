@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronicle-mcp-server"
+version = "1.0.0"
+description = "Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens."
+readme = "README.md"
+authors = [{ name = "Leviathan" }]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+chronicle-mcp-server = "chat_server:mcp.run"
