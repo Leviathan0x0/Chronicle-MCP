@@ -190,4 +190,4 @@ python3 test_all_tools.py
 
 This project uses the MIT License. See the LICENSE file for details.
 
-<!-- mcp-name: io.github.Leviathan0x0/chronicle-mcp -->
+mcp-name: io.github.Leviathan0x0/chronicle-mcp
