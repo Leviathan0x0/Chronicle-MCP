@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: chronicle-mcp-server
-Version: 1.1.1
+Version: 1.1.2
 Summary: Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.
 Author: Leviathan
 License: MIT
@@ -318,6 +318,26 @@ Alternatively, you can configure the editor manually to execute the following st
   }
 }
 ```
+
+---
+
+## Automatic Session Saving in Cursor and VS Code
+
+Since editors (like Cursor or VS Code) do not notify MCP servers when a chat window or tab is closed, Chronicle implements a multi-step solution to ensure your conversation history is saved automatically:
+
+### 1. Process Exit Handler (Automatic Flush)
+The Chronicle server includes an exit handler registered via Python's `atexit` module. When you close a chat tab or close the editor, the editor terminates the stdio connection, shutting down the Chronicle process. Upon receiving this shutdown trigger, the server automatically flushes the registered pending session to the local chats folder.
+
+### 2. Automatic Workspace Rules Generation
+For this flush to succeed, the active chat session must be registered during the conversation. Chronicle handles this setup automatically: upon server startup, it checks the active project workspace root directory and automatically creates or appends the required rules to the `.cursorrules` and `.clinerules` files.
+
+This ensures that the AI agent in Cursor or VS Code (via Cline) is automatically instructed to register the session at the start of the chat. The appended rule states:
+
+```text
+At the beginning of the chat session, you must call the "register_session_for_auto_save" tool to register this conversation. Provide a descriptive title based on the user's initial prompt. As the conversation progresses, periodically update the registration payload to keep it current.
+```
+
+This ensures that the chat history is registered dynamically, and Chronicle will write the complete history to your storage folder as soon as the editor terminates the connection.
 
 ---
 
