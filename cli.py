@@ -173,7 +173,17 @@ def main():
         update_json_config(args.app)
         return
 
+    import atexit
     import chat_server
+
+    def flush_on_exit():
+        try:
+            from chat_core import get_connector
+            get_connector().trigger_auto_save_on_session_end()
+        except Exception:
+            pass
+
+    atexit.register(flush_on_exit)
     chat_server.mcp.run()
 
 if __name__ == "__main__":
