@@ -1,5 +1,8 @@
 LICENSE
 README.md
+chat_core.py
+chat_server.py
+cli.py
 pyproject.toml
 chronicle_mcp_server.egg-info/PKG-INFO
 chronicle_mcp_server.egg-info/SOURCES.txt

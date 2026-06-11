@@ -1,2 +1,2 @@
 [console_scripts]
-chronicle-mcp-server = chat_server:mcp.run
+chronicle = cli:main

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: chronicle-mcp-server
-Version: 1.0.0
+Version: 1.1.1
 Summary: Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.
 Author: Leviathan
 License: MIT
@@ -13,188 +13,326 @@ License-File: LICENSE
 Requires-Dist: mcp>=1.0.0
 Dynamic: license-file
 
-# Chronicle (Universal Chat Connector)
+# Chronicle: Universal Chat Connector Model Context Protocol Server
 
-<p align="center">
-  <img src="assets/logo.png" alt="Chronicle Logo" width="400"/>
-</p>
+Chronicle is a production-grade Model Context Protocol (MCP) server designed to sync, clean, format, and index local artificial intelligence chat transcripts. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
-Chronicle is a tool that links your AI assistants (like ChatGPT or Claude) to your local saved chats. It helps the AI find, search, compare, and copy your past conversations.
+## Key Architectural Capabilities
 
-Chronicle is on the MCP Marketplace. You can install it with one click there to connect your AI directly.
+### Format Normalization Engine
+AI providers and editor clients save conversation logs in diverse formats. Chronicle normalizes these structures into a standard role-and-content message format:
+* **ChatGPT Exports**: ChatGPT exports conversation histories in recursive mapping node structures. Chronicle traverses and flattens these maps, sorts messages chronologically by creation timestamp, and extracts the plain-text message threads.
+* **Claude Exports**: Claude structures messages as flat lists nested under the chat_messages field. Chronicle parses these lists, maps custom sender roles (such as human and assistant) to standard roles, and cleans the text strings.
+* **Generic and Markdown Formats**: Chronicle includes parsers for flat JSON message lists (such as Cline or Continue) and structured Markdown logs (mapping headers like User and Assistant to message boundaries).
 
-### NOTE:
-Please give this repository a star if you used it so I can claim the special offers that are given to open-source contributers.
-
----
-
-## What Chronicle Does
-
-- **Client Folders**: Keeps your saved chats organized in folders for different AIs like ChatGPT or Claude.
-- **Special Search**: Helps the AI find past chats by searching for similar meanings and not just exact matching words. You can also search for files saved between certain dates or group files by topic.
-- **Token Efficiency**: Hides large chunks of code or shortens very long messages when reading past chats. This helps save data limits and keeps the AI fast.
-- **Smart Helpers**: Helps the AI find tasks, summarize conversations, and compare chats.
-- **Auto Saving**: Saves your active chats automatically when they get long.
-- **Clean Storage**: Finds and deletes duplicate files and shrinks old files to save disk space.
+### Context Token Optimization
+Large chat logs can quickly exhaust context windows and increase API costs. Chronicle implements proactive token-saving mechanisms:
+* **Code Block Summarization**: Automatically replaces verbose code blocks with metadata summaries indicating the programming language and line count. This behavior can be disabled on demand to read full code snippets.
+* **Length Limiting**: Truncates extremely long individual messages at a configurable character threshold, appending a notice that the user can re-run the tool with expanded limits if necessary.
 
 ---
 
-## How to Install and Set Up
+## Command Line Interface Mechanics
 
-### Prerequisites
-You need Python version 3.10 or higher on your computer.
+The `cli.py` file serves as the system's entry point, registering a unified `chronicle` command on the system path via the `pyproject.toml` configuration (`chronicle = "cli:main"`). The CLI contains several advanced capabilities designed for platform compatibility and developer ergonomics:
 
-### Step 1: Download the Files
-Clone the folder from GitHub and go inside it:
+### 1. Unified Chronicle Global Command
+When run without subcommands, the `chronicle` command launches the stdio transport server for MCP clients:
+```bash
+chronicle
+```
+It accepts options like `--chats-folder` to configure custom storage directories, and exposes the subcommands `add` and `split`.
+
+### 2. Cross-Platform Path Resolution Rules
+The CLI implements path resolution logic using Python's `sys.platform` and `pathlib.Path` to match standard OS conventions for user directories:
+* **macOS (Darwin)**: Resolves configurations to the user's home Library folder, typically under `~/Library/Application Support/`.
+* **Windows (Win32)**: Leverages the `%APPDATA%` environment variable, falling back to `~/AppData/Roaming/` if the variable is not set.
+* **Linux**: Follows the XDG base directory specification, resolving to `~/.config/`.
+
+### 3. Native IDE Integration and Fallback Engine
+The CLI wrapper provides out-of-the-box support for leading AI-assisted development tools and editors:
+* **Cursor**: Reads and writes configurations to `~/.cursor/mcp.json`.
+* **Claude Code**: Integrates with `~/.claude.json`.
+* **VS Code (Cline/RooCode/Continue)**: Standardizes pathing across platforms:
+  * macOS: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+  * Windows: `%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+  * Linux: `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+* **Trae**: Resolves configuration to:
+  * macOS: `~/Library/Application Support/Trae/mcp.json`
+  * Windows: `%APPDATA%/Trae/mcp.json`
+  * Linux: `~/.config/Trae/mcp.json`
+* **Dynamic Fallback Engine**: For emerging platforms (such as Kiro, MiniMax, Qwen Code, Grok Build, or Antigravity), the CLI employs a fallback search pattern. It first checks for a user home dot-directory configuration (such as `~/.<app_name>/mcp.json`). If that directory is missing, it creates the app-specific configuration in the standard application support folder for the respective platform (e.g. `~/Library/Application Support/<app_name>/mcp.json` on macOS).
+
+### 4. Prevent ENOENT Errors with shutil.which
+Host clients (like Claude Desktop or Cline) spawn MCP servers within isolated subprocesses that often do not inherit the user's login shell environment variables (such as custom paths defined in `.bashrc` or `.zshrc`). Attempting to call `uvx` or global scripts directly can raise an `ENOENT` connection error if the host application cannot find the executable.
+To solve this, the `chronicle add` utility uses Python's `shutil.which("uvx")` to scan the host machine path during configuration. It resolves the absolute system path of `uvx` (such as `/opt/homebrew/bin/uvx` or `/usr/local/bin/uvx`) and writes this absolute path directly to the IDE's JSON configuration file.
+
+### 5. Structural Split Engine Subcommand
+Users downloading conversational archives from ChatGPT or Claude are often provided with a single monolithic JSON file (such as `conversations.json`) containing hundreds of distinct threads.
+The `chronicle split` subcommand parses these large payloads and splits them into individual JSON files:
+* Automatically detects the schema format (nested conversation trees or flat lists).
+* Identifies thread titles using key fallback fields (checking `title`, `name`, and `chat_title`).
+* Sanitizes file names to remove platform-forbidden characters (such as `/`, `\`, `*`, `?`, `:`, `"`, `<`, `>`, and `|`) and limits length.
+* Resolves filename collisions by appending incremental numeric suffixes.
 
 ```bash
-git clone https://github.com/Leviathan0x0/Chronicle-MCP.git
-cd Chronicle-MCP
+chronicle split /path/to/conversations.json --out /path/to/output_directory
 ```
 
-### Step 2: Set Up Python
-Create a private Python setup folder and activate it:
-
+### 6. Global Chats Folder Configuration
+By default, Chronicle stores processed archives in `~/.chronicle/chats`. You can configure a custom global storage folder using the `--chats-folder` parameter:
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+chronicle --chats-folder /path/to/custom/chats
 ```
-
-### Step 3: Install Required Packages
-Install the helper software packages:
-
-```bash
-pip install -r requirements.txt
-```
+This saves the target path to a local settings file (`~/.chronicle_settings.json`), allowing you to centralize your archives across multiple development environments.
 
 ---
 
-## How to Import Your Past Saved Chats
+## Tool Reference Catalog
 
-You can save new chats automatically or load your old ones.
-
-### 1. Auto Saving
-When you chat with an AI that has Chronicle connected, the AI will automatically save your chat in the background to your computer.
-
-### 2. Copying Your Old Chats
-If you want to load chats from before you had Chronicle:
-
-#### Step A: Download your data
-Go to settings inside ChatGPT or Claude. Click the export data button. You will get a zip file. Unzip this file on your computer.
-
-#### Step B: Split big files
-If your downloaded data is one big file with all your chats inside (like ChatGPT's conversations.json file):
-
-```bash
-# Activate your python setup folder
-source venv/bin/activate
-
-# Run the separator tool to split the big file into separate files
-python3 split_chats.py
-
-# Or run it with a custom folder path where you want the chats to go
-python3 split_chats.py /path/to/your/folder
-```
-
-#### Step C: Move the files
-If you have separate files for each chat:
-- Copy and paste those files directly into the chats folder on your computer (located at ~/.chronicle/chats/).
-- Or use the import tools from the AI to import the files.
-
----
-
-## Supported File Styles
-
-Chronicle reads and translates different chat styles automatically:
-
-### ChatGPT Style
-- **How it works**: ChatGPT saves chats in connected text maps. Chronicle flattens these maps, sorts them by time, and extracts the text.
-
-### Claude Style
-- **How it works**: Claude saves chats in list style under chat_messages. Chronicle reads these lists and maps the sender names to user and assistant.
-
-### Generic Style (Cline, Continue, and others)
-- **How it works**: Other tools save chats as simple lists. Chronicle reads these lists and matches common words for sender and message content.
-
----
-
-## Tool List
-
-Chronicle has 25 tools to help your AI manage chats:
+Chronicle exposes 27 core tools categorized into logical operations, allowing client applications to run semantic queries, inspect metadata, sync transcripts, and clean storage.
 
 ### Core Tools
-- `list_all_stored_chats`: List your saved files page by page.
-- `search_chats_by_keywords`: Search chats using keywords.
-- `read_chat_message_range`: Read a range of messages with options to show shortened code to save space.
-- `save_current_conversation_state`: Save active chats.
+* **`list_all_stored_chats`**
+  * Description: Lists all available archive files in the index. Uses pagination to prevent token exhaustion.
+  * Parameters:
+    * `page` (int, default: 1): The page number to retrieve.
+    * `per_page` (int, default: 50): Number of files per page.
+    * `client` (str, default: "default"): Target client folder.
+* **`search_chats_by_keywords`**
+  * Description: Searches conversation archives using exact string matching on keywords.
+  * Parameters:
+    * `keywords` (list of strings): The keywords to match.
+    * `limit` (int, default: 50): Maximum results to return.
+    * `client` (str, default: "default"): Target client folder.
+* **`read_chat_message_range`**
+  * Description: Reads specific message indices from a conversation archive. Optimizes token usage by default.
+  * Parameters:
+    * `file_name` (str): Name of the chat file.
+    * `start_msg` (int, default: 1): Starting message index (1-indexed).
+    * `end_msg` (int, default: 20): Ending message index.
+    * `max_msg_len` (int, default: 1000): Maximum message characters to output before truncating. Set to 0 for unlimited.
+    * `summarize_code` (bool, default: True): Replaces markdown code blocks with summary headers.
+    * `client` (str, default: "default"): Target client folder.
+* **`save_current_conversation_state`**
+  * Description: Saves ongoing session history to storage.
+  * Parameters:
+    * `conversation_name` (str): Name of the conversation.
+    * `messages` (list of dicts): The list of message objects.
+    * `force_save` (bool, default: False): Ignores the threshold limit and saves immediately.
+    * `client` (str, default: "default"): Target client folder.
 
-### Edit Tools
-- `delete_stored_chat`: Delete a saved chat file.
-- `get_chat_metadata`: See file details like size and date.
-- `merge_conversation_into_archive`: Add new messages to an old file.
-- `export_chat_as_markdown`: Export a chat as a text document.
+### High Impact and Edit Tools
+* **`delete_stored_chat`**
+  * Description: Permanently removes a stored chat archive. Requires explicit confirmation.
+  * Parameters:
+    * `file_name` (str): File name to delete.
+    * `confirm` (bool, default: False): Must be True to proceed.
+    * `client` (str, default: "default"): Target client folder.
+* **`get_chat_metadata`**
+  * Description: Returns statistics about an archive, including message count, file size, last modified date, and origin.
+  * Parameters:
+    * `file_name` (str): Name of the target file.
+    * `client` (str, default: "default"): Target client folder.
+* **`merge_conversation_into_archive`**
+  * Description: Appends new message logs to an existing chat archive.
+  * Parameters:
+    * `file_name` (str): Target chat file name.
+    * `new_messages` (list of dicts): Messages to append.
+    * `client` (str, default: "default"): Target client folder.
+* **`export_chat_as_markdown`**
+  * Description: Exports a structured chat archive into a clean, human-readable Markdown file.
+  * Parameters:
+    * `file_name` (str): Target chat file name.
+    * `output_name` (str, optional): Custom file name for the output Markdown.
+    * `client` (str, default: "default"): Target client folder.
 
-### Search Tools
-- `search_chats_semantic`: Search files using similar meanings.
-- `get_chat_summary`: Get a short summary of a chat.
-- `find_related_chats`: Find chats that talk about similar things.
-- `filter_chats_by_date_range`: Find chats saved between two dates.
+### Search and Retrieval Tools
+* **`search_chats_semantic`**
+  * Description: Performs semantic similarity search over stored archives using TF-IDF cosine similarity. No API keys required.
+  * Parameters:
+    * `query` (str): Search query.
+    * `top_k` (int, default: 10): Maximum matches to return.
+    * `client` (str, default: "default"): Target client folder.
+* **`get_chat_summary`**
+  * Description: Returns an extractive, one-paragraph preview summary of the chat using opening and closing boundaries.
+  * Parameters:
+    * `file_name` (str): Target file name.
+    * `client` (str, default: "default"): Target client folder.
+* **`find_related_chats`**
+  * Description: Finds archived chats that are semantically similar to a given chat archive.
+  * Parameters:
+    * `file_name` (str): Reference file name.
+    * `top_k` (int, default: 5): Number of related items.
+    * `client` (str, default: "default"): Target client folder.
+* **`filter_chats_by_date_range`**
+  * Description: Finds chats that were modified between two specified dates (formatted as YYYY-MM-DD).
+  * Parameters:
+    * `start_date` (str): Start date string.
+    * `end_date` (str): End date string.
+    * `limit` (int, default: 50): Result limit.
+    * `client` (str, default: "default"): Target client folder.
 
-### Sync Tools
-- `register_session_for_auto_save`: Mark a chat to save later.
-- `trigger_auto_save_on_session_end`: Save marked chats now.
-- `watch_chats_folder`: Watch your folders for new or changed files.
-- `import_chat_from_content`: Import a chat from text.
-- `import_chat_from_local_path`: Import a chat from a local file.
-- `sync_agent_transcripts`: Sync saved chats from tools like Cursor, Continue, or Cline.
-- `sync_cursor_agent_transcripts`: Sync saved chats from Cursor (older version).
+### Automation and Sync Tools
+* **`register_session_for_auto_save`**
+  * Description: Registers the current chat session for auto-saving upon session termination.
+  * Parameters:
+    * `conversation_name` (str): Session name.
+    * `messages` (list of dicts): Active messages.
+    * `client` (str, default: "default"): Target client folder.
+* **`trigger_auto_save_on_session_end`**
+  * Description: Flushes any registered pending sessions directly to disk.
+  * Parameters: None.
+* **`watch_chats_folder`**
+  * Description: Checks directories and returns new, modified, or deleted files since the last execution.
+  * Parameters:
+    * `client` (str, default: "default"): Target client folder.
+* **`import_chat_from_content`**
+  * Description: Imports a raw JSON string or structured list directly as a saved conversation.
+  * Parameters:
+    * `title` (str): Title of the imported chat.
+    * `content` (str or dict or list): Raw conversation payload.
+    * `client` (str, default: "default"): Target client folder.
+* **`import_chat_from_local_path`**
+  * Description: Reads a local JSON file and imports it into the local Chronicle database.
+  * Parameters:
+    * `source_path` (str): Absolute file path to the source file.
+    * `title` (str, optional): Custom title for the chat.
+    * `client` (str, default: "default"): Target client folder.
+* **`sync_agent_transcripts`**
+  * Description: Scans external folders and imports transcripts (JSON, JSONL, or MD) into the specified client directory.
+  * Parameters:
+    * `client` (str): Target client directory (such as cursor, continue, cline, or copilot).
+    * `source_dir` (str, optional): Override path to scan. Defaults to configured IDE paths.
+    * `limit` (int, default: 50): Maximum files to sync.
+* **`sync_cursor_agent_transcripts`**
+  * Description: Deprecated. Specialized import for Cursor agent logs located in workspace project subdirectories. Use `sync_agent_transcripts` with `client="cursor"`.
+  * Parameters:
+    * `limit` (int, default: 50): Sync limit.
 
-### Info Tools
-- `extract_action_items`: Find tasks and to-do lists in your chats.
-- `build_knowledge_index`: Group your files by topic.
-- `compare_two_chats`: See what two chats have in common and what is unique.
-- `generate_project_brief_from_chats`: Combine chats into a project summary document.
+### Intelligence Layer Tools
+* **`extract_action_items`**
+  * Description: Scans chat content using regular expressions to extract todos, action items, and task lists.
+  * Parameters:
+    * `file_name` (str): Target file name.
+    * `client` (str, default: "default"): Target client folder.
+* **`build_knowledge_index`**
+  * Description: Groups chats into thematic topics (such as coding, ui_design, mcp, roblox, school, or ai_agents) using keyword indexes.
+  * Parameters:
+    * `rebuild` (bool, default: False): Re-scans files and rebuilds the index file.
+    * `summary_only` (bool, default: False): Returns counts of files under each topic instead of file names.
+    * `client` (str, default: "default"): Target client folder.
+* **`compare_two_chats`**
+  * Description: Compares two conversations, outputting shared keywords and terms unique to each chat.
+  * Parameters:
+    * `file_name_a` (str): First file name.
+    * `file_name_b` (str): Second file name.
+    * `client` (str, default: "default"): Target client folder.
+* **`generate_project_brief_from_chats`**
+  * Description: Combines multiple chats into a single comprehensive Markdown file containing summaries and extracted action items.
+  * Parameters:
+    * `file_names` (list of strings): Source files to include.
+    * `brief_title` (str, default: "Project Brief"): Title of the output file.
+    * `client` (str, default: "default"): Target client folder.
 
-### System Tools
-- `configure_connector_settings`: Change settings like file size limits.
-- `compress_old_chat_archives`: Compress old files to save space.
-- `deduplicate_stored_chats`: Find and delete duplicate files.
-- `get_server_capabilities`: See the list of all tools.
+### Configuration and Operations Tools
+* **`configure_connector_settings`**
+  * Description: Updates configuration parameters (such as auto-save threshold limits and client directories).
+  * Parameters:
+    * `settings` (dict): Dict of settings (allowed keys: auto_save_message_threshold, client_paths, compression_days_threshold, cursor_transcripts_dir, transcripts_dirs).
+* **`compress_old_chat_archives`**
+  * Description: Compresses chat files older than a threshold (in days) using Gzip to save local disk space.
+  * Parameters:
+    * `days_old` (int, optional): Exclude files modified within these days. Defaults to configuration value (30 days).
+    * `client` (str, default: "default"): Target client folder.
+* **`deduplicate_stored_chats`**
+  * Description: Identifies and removes duplicate archives based on SHA-256 content hashing.
+  * Parameters:
+    * `dry_run` (bool, default: True): If True, lists duplicates without deleting them.
+    * `client` (str, default: "default"): Target client folder.
+* **`get_server_capabilities`**
+  * Description: Returns metadata about the server, including transports, categories, paths, and total tool count.
+  * Parameters: None.
 
 ---
 
-## Connecting to Your AI
+## Installation and Configuration
 
-### Claude Code
+### System Prerequisites
+* Python 3.10 or higher.
+* Python packages `mcp` (Model Context Protocol SDK).
+* Python `setuptools` (for installation as a package).
 
-If you downloaded the code manually, run this command in your terminal. Note: You must change `/absolute/path/to/` to the actual folder path where you saved the files on your computer.
+### Manual Installation
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Leviathan0x0/Chronicle-MCP.git
+   cd Chronicle-MCP
+   ```
+2. Set up a Python virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+3. Install dependencies and the package in editable mode:
+   ```bash
+   pip install -e .
+   ```
 
-```bash
-claude mcp add-json chronicle '{"command": "python3", "args": ["/absolute/path/to/Chronicle-MCP/chat_server.py"]}'
+### Quick Editor Integration
+You can automatically add Chronicle-MCP to your preferred IDE configuration using the `add` subcommand. This utility resolves the absolute path of `uvx` dynamically to guarantee error-free connections:
+
+* **Cursor**:
+  ```bash
+  chronicle add cursor
+  ```
+* **Claude Code**:
+  ```bash
+  chronicle add claude
+  ```
+* **VS Code (Cline / RooCode)**:
+  ```bash
+  chronicle add vscode
+  ```
+* **Trae**:
+  ```bash
+  chronicle add trae
+  ```
+* **Custom / Emerging IDEs**:
+  ```bash
+  chronicle add <editor-name>
+  ```
+
+Alternatively, you can configure the editor manually to execute the following startup command:
+```json
+{
+  "mcpServers": {
+    "chronicle-mcp": {
+      "command": "/absolute/path/to/uvx",
+      "args": [
+        "--from",
+        "chronicle-mcp-server",
+        "chronicle"
+      ]
+    }
+  }
+}
 ```
-
-If you installed the tool via the marketplace or npm, you do not need to use a folder path. Run this command instead:
-
-```bash
-claude mcp add-json chronicle '{"command": "npx", "args": ["-y", "chronicle-mcp"]}'
-```
-
-### Cursor or VS Code
-
-If you downloaded the code manually, go to Cursor settings, find the MCP section, and add a command tool:
-- Name: Chronicle
-- Command: `python3 /absolute/path/to/Chronicle-MCP/chat_server.py`
-
-If you installed the tool via the marketplace or npm, add this command instead:
-- Name: Chronicle
-- Command: `npx -y chronicle-mcp`
 
 ---
 
-## Testing Your Setup
+## Running Verification and Tests
 
-You can run the test tool to make sure everything works:
+Chronicle contains unit and integration tests to verify platform path resolution, parsing logic, and tool compatibility:
 
+### 1. Run Unit Tests
+To execute the suite of unit tests verifying core business logic:
+```bash
+python3 -m unittest test_chat_connector.py
+```
+
+### 2. Run Integration Tests
+To test all 27 tools against the live storage connector:
 ```bash
 python3 test_all_tools.py
 ```
@@ -203,6 +341,4 @@ python3 test_all_tools.py
 
 ## License
 
-This project uses the MIT License. See the LICENSE file for details.
-
-<!-- mcp-name: io.github.Leviathan0x0/chronicle-mcp -->
+This project is licensed under the MIT License. See the LICENSE file for details.
