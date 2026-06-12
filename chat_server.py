@@ -19,214 +19,143 @@ cc = get_connector()
 
 
 @mcp.tool()
-def list_all_stored_chats(
-    page: int = 1, per_page: int = 50, client: str = "default"
-) -> list[str]:
-    """List all available archive files in the index with pagination to save tokens."""
-    return cc.list_all_stored_chats(page, per_page, client)
-
-
-@mcp.tool()
-def search_chats_by_keywords(
-    keywords: list[str], limit: int = 50, client: str = "default"
-) -> list[str]:
-    """Search conversation archives using thematic keywords (truncated to limit to save tokens)."""
-    return cc.search_chats_by_keywords(keywords, limit, client)
-
-
-@mcp.tool()
-def read_chat_message_range(
-    file_name: str,
-    start_msg: int = 1,
-    end_msg: int = 20,
-    max_msg_len: int = 1000,
-    summarize_code: bool = True,
+def search_history(
+    query: str = "",
+    method: str = "semantic",
+    keywords: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 50,
+    top_k: int = 10,
     client: str = "default",
-) -> str:
-    """Read specific messages (summarize_code=True & max_msg_len=1000 active by default to save tokens)."""
-    return cc.read_chat_message_range(
-        file_name, start_msg, end_msg, max_msg_len, summarize_code, client
+    file_name: str | None = None,
+) -> list[str] | list[dict]:
+    """Search and filter historical transcripts. Options for method: 'semantic', 'keyword', 'date_range', 'related'."""
+    return cc.search_history(
+        query=query,
+        method=method,
+        keywords=keywords,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        top_k=top_k,
+        client=client,
+        file_name=file_name
     )
 
 
 @mcp.tool()
-def save_current_conversation_state(
-    conversation_name: str,
-    messages: list[dict],
-    force_save: bool = False,
+def get_chat_logs(
+    chat_id: str | None = None,
+    view_type: str = "content",
+    start_msg: int = 1,
+    end_msg: int = 20,
+    max_msg_len: int = 1000,
+    summarize_code: bool = True,
+    page: int = 1,
+    per_page: int = 50,
     client: str = "default",
-) -> str:
-    """Save ongoing session history to storage."""
-    return cc.save_current_conversation_state(conversation_name, messages, force_save, client)
-
-
-# ── High impact ─────────────────────────────────────────────────────────────
-
-
-@mcp.tool()
-def delete_stored_chat(file_name: str, confirm: bool = False, client: str = "default") -> str:
-    """Remove a stored chat archive (requires confirm=true)."""
-    return cc.delete_stored_chat(file_name, confirm, client)
-
-
-@mcp.tool()
-def get_chat_metadata(file_name: str, client: str = "default") -> dict:
-    """Return title, message count, file size, and last modified date."""
-    return cc.get_chat_metadata(file_name, client)
+) -> str | list[str] | dict:
+    """Retrieve lists of files, metadata, summaries, or specific message ranges. Options for view_type: 'content', 'metadata', 'summary'."""
+    return cc.get_chat_logs(
+        chat_id=chat_id,
+        view_type=view_type,
+        start_msg=start_msg,
+        end_msg=end_msg,
+        max_msg_len=max_msg_len,
+        summarize_code=summarize_code,
+        page=page,
+        per_page=per_page,
+        client=client
+    )
 
 
 @mcp.tool()
-def merge_conversation_into_archive(
-    file_name: str, new_messages: list[dict], client: str = "default"
-) -> str:
-    """Append new messages to an existing chat archive."""
-    return cc.merge_conversation_into_archive(file_name, new_messages, client)
+def sync_workspace_data(
+    source_type: str,
+    payload: str | dict | list | None = None,
+    title: str | None = None,
+    source_dir: str | None = None,
+    limit: int = 50,
+    client: str = "default",
+) -> dict | str:
+    """Ingest and normalize external conversations or live transcripts. Options for source_type: 'agent_transcripts', 'cursor_agent_transcripts', 'local_path', 'raw_content'."""
+    return cc.sync_workspace_data(
+        source_type=source_type,
+        payload=payload,
+        title=title,
+        source_dir=source_dir,
+        limit=limit,
+        client=client
+    )
 
 
 @mcp.tool()
-def export_chat_as_markdown(
-    file_name: str, output_name: str | None = None, client: str = "default"
-) -> str:
-    """Export a chat archive as a human-readable markdown file."""
-    return cc.export_chat_as_markdown(file_name, output_name, client)
-
-
-# ── Search and retrieval ────────────────────────────────────────────────────
-
-
-@mcp.tool()
-def search_chats_semantic(query: str, top_k: int = 10, client: str = "default") -> list[dict]:
-    """Search archives using TF-IDF semantic similarity (no API key required)."""
-    return cc.search_chats_semantic(query, top_k, client)
-
-
-@mcp.tool()
-def get_chat_summary(file_name: str, client: str = "default") -> str:
-    """Generate a one-paragraph extractive summary of a chat."""
-    return cc.get_chat_summary(file_name, client)
-
-
-@mcp.tool()
-def find_related_chats(file_name: str, top_k: int = 5, client: str = "default") -> list[dict]:
-    """Find chats semantically similar to a given archive."""
-    return cc.find_related_chats(file_name, top_k, client)
+def compile_project_insights(
+    insight_type: str,
+    target_chats: list[str] | None = None,
+    file_name: str | None = None,
+    file_name_a: str | None = None,
+    file_name_b: str | None = None,
+    brief_title: str = "Project Brief",
+    rebuild: bool = False,
+    summary_only: bool = False,
+    client: str = "default",
+) -> str | list[str] | dict:
+    """Analyze historical logs to extract tasks, briefs, or indices. Options for insight_type: 'action_items', 'knowledge_index', 'compare_chats', 'project_brief'."""
+    return cc.compile_project_insights(
+        insight_type=insight_type,
+        target_chats=target_chats,
+        file_name=file_name,
+        file_name_a=file_name_a,
+        file_name_b=file_name_b,
+        brief_title=brief_title,
+        rebuild=rebuild,
+        summary_only=summary_only,
+        client=client
+    )
 
 
 @mcp.tool()
-def filter_chats_by_date_range(
-    start_date: str, end_date: str, limit: int = 50, client: str = "default"
-) -> list[dict]:
-    """Filter chats modified between two dates (YYYY-MM-DD)."""
-    return cc.filter_chats_by_date_range(start_date, end_date, limit, client)
-
-
-# ── Automation and workflows ────────────────────────────────────────────────
-
-
-@mcp.tool()
-def register_session_for_auto_save(
-    conversation_name: str, messages: list[dict], client: str = "default"
-) -> str:
-    """Register the current session for auto-save on session end."""
-    return cc.register_session_for_auto_save(conversation_name, messages, client)
-
-
-@mcp.tool()
-def trigger_auto_save_on_session_end() -> str:
-    """Flush any pending registered session to disk."""
-    return cc.trigger_auto_save_on_session_end()
+def maintain_storage(
+    op_type: str,
+    settings: dict | None = None,
+    days_old: int | None = None,
+    dry_run: bool = True,
+    client: str = "default",
+) -> dict | str:
+    """Perform storage maintenance, deduplication, configuration, and capabilities retrieval. Options for op_type: 'compress', 'deduplicate', 'configure', 'capabilities'."""
+    return cc.maintain_storage(
+        op_type=op_type,
+        settings=settings,
+        days_old=days_old,
+        dry_run=dry_run,
+        client=client
+    )
 
 
 @mcp.tool()
-def watch_chats_folder(client: str = "default") -> dict:
-    """Report new, modified, or deleted chat files since last watch."""
-    return cc.watch_chats_folder(client)
-
-
-@mcp.tool()
-def import_chat_from_content(title: str, content: str, client: str = "default") -> str:
-    """Import a chat from a JSON string (clipboard paste or API response)."""
-    return cc.import_chat_from_content(title, content, client)
-
-
-@mcp.tool()
-def import_chat_from_local_path(
-    source_path: str, title: str | None = None, client: str = "default"
-) -> str:
-    """Import a chat from a local JSON file path."""
-    return cc.import_chat_from_local_path(source_path, title, client)
-
-
-@mcp.tool()
-def sync_agent_transcripts(
-    client: str, source_dir: str | None = None, limit: int = 50
-) -> dict:
-    """Sync external agent/client transcripts (JSON, JSONL, or MD) to a client folder."""
-    return cc.sync_agent_transcripts(client, source_dir, limit)
-
-
-@mcp.tool()
-def sync_cursor_agent_transcripts(limit: int = 50) -> dict:
-    """Import Cursor agent transcript JSONL files into the cursor client folder."""
-    return cc.sync_cursor_agent_transcripts(limit)
-
-
-# ── Intelligence layer ──────────────────────────────────────────────────────
-
-
-@mcp.tool()
-def extract_action_items(file_name: str, client: str = "default") -> list[str]:
-    """Extract TODOs and action items from a stored conversation."""
-    return cc.extract_action_items(file_name, client)
-
-
-@mcp.tool()
-def build_knowledge_index(
-    rebuild: bool = False, summary_only: bool = False, client: str = "default"
-) -> dict:
-    """Build or return a topic-tagged index of stored chats (use summary_only=True to save tokens)."""
-    return cc.build_knowledge_index(rebuild, summary_only, client)
-
-
-@mcp.tool()
-def compare_two_chats(file_name_a: str, file_name_b: str, client: str = "default") -> str:
-    """Compare two chats by shared and unique keyword topics."""
-    return cc.compare_two_chats(file_name_a, file_name_b, client)
-
-
-@mcp.tool()
-def generate_project_brief_from_chats(
-    file_names: list[str], brief_title: str = "Project Brief", client: str = "default"
-) -> str:
-    """Combine multiple chats into a single project brief markdown file."""
-    return cc.generate_project_brief_from_chats(file_names, brief_title, client)
-
-
-# ── Config and ops ──────────────────────────────────────────────────────────
-
-
-@mcp.tool()
-def configure_connector_settings(settings: dict) -> str:
-    """Update connector config (thresholds, client paths, compression, transcripts dir)."""
-    return cc.configure_connector_settings(settings)
-
-
-@mcp.tool()
-def compress_old_chat_archives(days_old: int | None = None, client: str = "default") -> dict:
-    """Gzip chat archives older than N days to save disk space."""
-    return cc.compress_old_chat_archives(days_old, client)
-
-
-@mcp.tool()
-def deduplicate_stored_chats(dry_run: bool = True, client: str = "default") -> dict:
-    """Find (and optionally remove) duplicate chat archives by content hash."""
-    return cc.deduplicate_stored_chats(dry_run, client)
-
-
-@mcp.tool()
-def get_server_capabilities() -> dict:
-    """List all available tools, transports, and feature categories."""
-    return cc.get_server_capabilities()
+def manage_session_state(
+    action: str,
+    conversation_name: str | None = None,
+    messages: list[dict] | None = None,
+    force_save: bool = False,
+    file_name: str | None = None,
+    confirm: bool = False,
+    new_messages: list[dict] | None = None,
+    client: str = "default",
+) -> dict | str:
+    """Manage session auto-saving, folder watching, merging, exporting, and deletion. Options for action: 'save', 'register_auto_save', 'trigger_auto_save', 'watch_folder', 'merge', 'export_markdown', 'delete'."""
+    return cc.manage_session_state(
+        action=action,
+        conversation_name=conversation_name,
+        messages=messages,
+        force_save=force_save,
+        file_name=file_name,
+        confirm=confirm,
+        new_messages=new_messages,
+        client=client
+    )
 
 
 if __name__ == "__main__":

@@ -75,171 +75,103 @@ This saves the target path to a local settings file (`~/.chronicle_settings.json
 
 ## Tool Reference Catalog
 
-Chronicle exposes 27 core tools categorized into logical operations, allowing client applications to run semantic queries, inspect metadata, sync transcripts, and clean storage.
+Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set.
 
-### Core Tools
-* **`list_all_stored_chats`**
-  * Description: Lists all available archive files in the index. Uses pagination to prevent token exhaustion.
-  * Parameters:
-    * `page` (int, default: 1): The page number to retrieve.
-    * `per_page` (int, default: 50): Number of files per page.
-    * `client` (str, default: "default"): Target client folder.
-* **`search_chats_by_keywords`**
-  * Description: Searches conversation archives using exact string matching on keywords.
-  * Parameters:
-    * `keywords` (list of strings): The keywords to match.
-    * `limit` (int, default: 50): Maximum results to return.
-    * `client` (str, default: "default"): Target client folder.
-* **`read_chat_message_range`**
-  * Description: Reads specific message indices from a conversation archive. Optimizes token usage by default.
-  * Parameters:
-    * `file_name` (str): Name of the chat file.
-    * `start_msg` (int, default: 1): Starting message index (1-indexed).
-    * `end_msg` (int, default: 20): Ending message index.
-    * `max_msg_len` (int, default: 1000): Maximum message characters to output before truncating. Set to 0 for unlimited.
-    * `summarize_code` (bool, default: True): Replaces markdown code blocks with summary headers.
-    * `client` (str, default: "default"): Target client folder.
-* **`save_current_conversation_state`**
-  * Description: Saves ongoing session history to storage.
-  * Parameters:
-    * `conversation_name` (str): Name of the conversation.
-    * `messages` (list of dicts): The list of message objects.
-    * `force_save` (bool, default: False): Ignores the threshold limit and saves immediately.
-    * `client` (str, default: "default"): Target client folder.
+### 1. `search_history`
+* **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, TF-IDF semantic, date range, and related chat lookups.
+* **Parameters**:
+  * `query` (str, default: ""): The search query string or keywords list.
+  * `method` (str, default: "semantic"): Search methodology. Supported options:
+    * `semantic`: Standard semantic retrieval using TF-IDF cosine similarity.
+    * `keyword`: Exact string matching against terms in files.
+    * `date_range`: Filters files modified within a date interval (requires `start_date` and `end_date`).
+    * `related`: Finds archives semantically close to a reference file.
+  * `keywords` (list of strings, optional): Optional list of keywords for keyword search.
+  * `start_date` (str, optional): Start date string (YYYY-MM-DD) for date range filtering.
+  * `end_date` (str, optional): End date string (YYYY-MM-DD) for date range filtering.
+  * `limit` (int, default: 50): Maximum result count for keyword or date range searches.
+  * `top_k` (int, default: 10): Maximum matches for semantic or related chat searches.
+  * `client` (str, default: "default"): Subfolder client identifier.
+  * `file_name` (str, optional): Reference chat filename for related search.
 
-### High Impact and Edit Tools
-* **`delete_stored_chat`**
-  * Description: Permanently removes a stored chat archive. Requires explicit confirmation.
-  * Parameters:
-    * `file_name` (str): File name to delete.
-    * `confirm` (bool, default: False): Must be True to proceed.
-    * `client` (str, default: "default"): Target client folder.
-* **`get_chat_metadata`**
-  * Description: Returns statistics about an archive, including message count, file size, last modified date, and origin.
-  * Parameters:
-    * `file_name` (str): Name of the target file.
-    * `client` (str, default: "default"): Target client folder.
-* **`merge_conversation_into_archive`**
-  * Description: Appends new message logs to an existing chat archive.
-  * Parameters:
-    * `file_name` (str): Target chat file name.
-    * `new_messages` (list of dicts): Messages to append.
-    * `client` (str, default: "default"): Target client folder.
-* **`export_chat_as_markdown`**
-  * Description: Exports a structured chat archive into a clean, human-readable Markdown file.
-  * Parameters:
-    * `file_name` (str): Target chat file name.
-    * `output_name` (str, optional): Custom file name for the output Markdown.
-    * `client` (str, default: "default"): Target client folder.
+### 2. `get_chat_logs`
+* **Description**: Unified read interface for stored transcripts. Fetches paginated file lists, summaries, file metadata, or message ranges with token-saving options.
+* **Parameters**:
+  * `chat_id` (str, optional): Filename of the target chat. If omitted, lists all available files.
+  * `view_type` (str, default: "content"): The type of information to retrieve. Supported options:
+    * `content`: Message text slice within specified index ranges.
+    * `metadata`: File statistics including message counts and modification dates.
+    * `summary`: Structural summary highlighting the opener and closer context.
+  * `start_msg` (int, default: 1): Message slice start index (1-indexed).
+  * `end_msg` (int, default: 20): Message slice end index.
+  * `max_msg_len` (int, default: 1000): Character limit for messages to prevent token inflation. Set to 0 for unlimited.
+  * `summarize_code` (bool, default: True): Summarizes markdown code blocks into metadata headers.
+  * `page` (int, default: 1): Page index for folder listing (used when `chat_id` is omitted).
+  * `per_page` (int, default: 50): Page result limit for folder listing.
+  * `client` (str, default: "default"): Subfolder client identifier.
 
-### Search and Retrieval Tools
-* **`search_chats_semantic`**
-  * Description: Performs semantic similarity search over stored archives using TF-IDF cosine similarity. No API keys required.
-  * Parameters:
-    * `query` (str): Search query.
-    * `top_k` (int, default: 10): Maximum matches to return.
-    * `client` (str, default: "default"): Target client folder.
-* **`get_chat_summary`**
-  * Description: Returns an extractive, one-paragraph preview summary of the chat using opening and closing boundaries.
-  * Parameters:
-    * `file_name` (str): Target file name.
-    * `client` (str, default: "default"): Target client folder.
-* **`find_related_chats`**
-  * Description: Finds archived chats that are semantically similar to a given chat archive.
-  * Parameters:
-    * `file_name` (str): Reference file name.
-    * `top_k` (int, default: 5): Number of related items.
-    * `client` (str, default: "default"): Target client folder.
-* **`filter_chats_by_date_range`**
-  * Description: Finds chats that were modified between two specified dates (formatted as YYYY-MM-DD).
-  * Parameters:
-    * `start_date` (str): Start date string.
-    * `end_date` (str): End date string.
-    * `limit` (int, default: 50): Result limit.
-    * `client` (str, default: "default"): Target client folder.
+### 3. `sync_workspace_data`
+* **Description**: Ingests, imports, and syncs external conversation transcripts or workspace logs from various tools and formats.
+* **Parameters**:
+  * `source_type` (str): Source type identifier. Supported options:
+    * `raw_content`: Direct JSON import from text buffers or clipboard paste.
+    * `local_path`: Copies a JSON file from a local path on disk.
+    * `agent_transcripts`: Syncs transcripts (JSON, JSONL, MD) from configured third-party client folders.
+    * `cursor_agent_transcripts`: Deprecated. Scans Cursor workspace project transcript folders.
+  * `payload` (str, dict, or list, optional): Input data payload (raw JSON text, file path on disk, or folder path).
+  * `title` (str, optional): Target file name or title for imports.
+  * `source_dir` (str, optional): Override folder directory for scanning transcripts.
+  * `limit` (int, default: 50): Maximum files to synchronize.
+  * `client` (str, default: "default"): Subfolder client identifier.
 
-### Automation and Sync Tools
-* **`register_session_for_auto_save`**
-  * Description: Registers the current chat session for auto-saving upon session termination.
-  * Parameters:
-    * `conversation_name` (str): Session name.
-    * `messages` (list of dicts): Active messages.
-    * `client` (str, default: "default"): Target client folder.
-* **`trigger_auto_save_on_session_end`**
-  * Description: Flushes any registered pending sessions directly to disk.
-  * Parameters: None.
-* **`watch_chats_folder`**
-  * Description: Checks directories and returns new, modified, or deleted files since the last execution.
-  * Parameters:
-    * `client` (str, default: "default"): Target client folder.
-* **`import_chat_from_content`**
-  * Description: Imports a raw JSON string or structured list directly as a saved conversation.
-  * Parameters:
-    * `title` (str): Title of the imported chat.
-    * `content` (str or dict or list): Raw conversation payload.
-    * `client` (str, default: "default"): Target client folder.
-* **`import_chat_from_local_path`**
-  * Description: Reads a local JSON file and imports it into the local Chronicle database.
-  * Parameters:
-    * `source_path` (str): Absolute file path to the source file.
-    * `title` (str, optional): Custom title for the chat.
-    * `client` (str, default: "default"): Target client folder.
-* **`sync_agent_transcripts`**
-  * Description: Scans external folders and imports transcripts (JSON, JSONL, or MD) into the specified client directory.
-  * Parameters:
-    * `client` (str): Target client directory (such as cursor, continue, cline, or copilot).
-    * `source_dir` (str, optional): Override path to scan. Defaults to configured IDE paths.
-    * `limit` (int, default: 50): Maximum files to sync.
-* **`sync_cursor_agent_transcripts`**
-  * Description: Deprecated. Specialized import for Cursor agent logs located in workspace project subdirectories. Use `sync_agent_transcripts` with `client="cursor"`.
-  * Parameters:
-    * `limit` (int, default: 50): Sync limit.
+### 4. `compile_project_insights`
+* **Description**: Aggregates and compiles insights from chat logs, including action item extraction, index indexing, chat comparisons, and brief generation.
+* **Parameters**:
+  * `insight_type` (str): Compilation format. Supported options:
+    * `action_items`: Extract todos, checkboxes, and task lists.
+    * `knowledge_index`: Rebuild or list the topic-categorized index of files.
+    * `compare_chats`: Analyze and detail shared and unique terms across two files.
+    * `project_brief`: Synthesize summaries and action items from multiple chats into one markdown document.
+  * `target_chats` (list of strings, optional): List of target chat filenames for briefs or comparisons.
+  * `file_name` (str, optional): Target chat filename for action item extraction.
+  * `file_name_a` (str, optional): First chat filename for comparison.
+  * `file_name_b` (str, optional): Second chat filename for comparison.
+  * `brief_title` (str, default: "Project Brief"): Title header for compiled briefs.
+  * `rebuild` (bool, default: False): Re-scans all files to update the knowledge index.
+  * `summary_only` (bool, default: False): Returns topic file counts instead of full file lists in index lookup.
+  * `client` (str, default: "default"): Subfolder client identifier.
 
-### Intelligence Layer Tools
-* **`extract_action_items`**
-  * Description: Scans chat content using regular expressions to extract todos, action items, and task lists.
-  * Parameters:
-    * `file_name` (str): Target file name.
-    * `client` (str, default: "default"): Target client folder.
-* **`build_knowledge_index`**
-  * Description: Groups chats into thematic topics (such as coding, ui_design, mcp, roblox, school, or ai_agents) using keyword indexes.
-  * Parameters:
-    * `rebuild` (bool, default: False): Re-scans files and rebuilds the index file.
-    * `summary_only` (bool, default: False): Returns counts of files under each topic instead of file names.
-    * `client` (str, default: "default"): Target client folder.
-* **`compare_two_chats`**
-  * Description: Compares two conversations, outputting shared keywords and terms unique to each chat.
-  * Parameters:
-    * `file_name_a` (str): First file name.
-    * `file_name_b` (str): Second file name.
-    * `client` (str, default: "default"): Target client folder.
-* **`generate_project_brief_from_chats`**
-  * Description: Combines multiple chats into a single comprehensive Markdown file containing summaries and extracted action items.
-  * Parameters:
-    * `file_names` (list of strings): Source files to include.
-    * `brief_title` (str, default: "Project Brief"): Title of the output file.
-    * `client` (str, default: "default"): Target client folder.
+### 5. `maintain_storage`
+* **Description**: Performs server operations, storage cleanups, settings configuration, and capabilities lookup.
+* **Parameters**:
+  * `op_type` (str): Maintenance operation name. Supported options:
+    * `compress`: Compresses historical archives older than a set age using Gzip.
+    * `deduplicate`: Content-hash based search and deletion of duplicate logs.
+    * `configure`: Updates auto-save message limits, paths, and transcripts.
+    * `capabilities`: Returns server meta-capabilities and client configurations.
+  * `settings` (dict, optional): Settings payload dict (for configure).
+  * `days_old` (int, optional): Cutoff threshold age in days for compression.
+  * `dry_run` (bool, default: True): Lists duplicates without performing deletions.
+  * `client` (str, default: "default"): Subfolder client identifier.
 
-### Configuration and Operations Tools
-* **`configure_connector_settings`**
-  * Description: Updates configuration parameters (such as auto-save threshold limits and client directories).
-  * Parameters:
-    * `settings` (dict): Dict of settings (allowed keys: auto_save_message_threshold, client_paths, compression_days_threshold, cursor_transcripts_dir, transcripts_dirs).
-* **`compress_old_chat_archives`**
-  * Description: Compresses chat files older than a threshold (in days) using Gzip to save local disk space.
-  * Parameters:
-    * `days_old` (int, optional): Exclude files modified within these days. Defaults to configuration value (30 days).
-    * `client` (str, default: "default"): Target client folder.
-* **`deduplicate_stored_chats`**
-  * Description: Identifies and removes duplicate archives based on SHA-256 content hashing.
-  * Parameters:
-    * `dry_run` (bool, default: True): If True, lists duplicates without deleting them.
-    * `client` (str, default: "default"): Target client folder.
-* **`get_server_capabilities`**
-  * Description: Returns metadata about the server, including transports, categories, paths, and total tool count.
-  * Parameters: None.
-
----
+### 6. `manage_session_state`
+* **Description**: Manages active session caching, folder monitoring, file merges, markdown exports, and file deletions.
+* **Parameters**:
+  * `action` (str): Operation to perform. Supported options:
+    * `save`: Commits active messages list to storage.
+    * `register_auto_save`: Registers the session for auto-saving on connection termination.
+    * `trigger_auto_save`: Instantly flushes pending sessions to disk.
+    * `watch_folder`: Reports file changes since the last execution.
+    * `merge`: Appends new messages to an existing chat archive.
+    * `export_markdown`: Converts a JSON transcript to a Markdown document.
+    * `delete`: Permanently deletes an archive file (requires confirm=True).
+  * `conversation_name` (str, optional): Active conversation name.
+  * `messages` (list of dicts, optional): Message list payload.
+  * `force_save` (bool, default: False): Saves the chat session even if below message limit thresholds.
+  * `file_name` (str, optional): Target file name.
+  * `confirm` (bool, default: False): Confirms deletion.
+  * `new_messages` (list of dicts, optional): Message list to merge.
+  * `client` (str, default: "default"): Subfolder client identifier.
 
 ## Installation and Configuration
 

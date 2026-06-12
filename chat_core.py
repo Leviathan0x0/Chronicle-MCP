@@ -1053,48 +1053,201 @@ class ChatConnector:
             "transports": ["stdio"],
             "tool_categories": {
                 "core": [
-                    "list_all_stored_chats",
-                    "search_chats_by_keywords",
-                    "read_chat_message_range",
-                    "save_current_conversation_state",
-                ],
-                "high_impact": [
-                    "delete_stored_chat",
-                    "get_chat_metadata",
-                    "merge_conversation_into_archive",
-                    "export_chat_as_markdown",
-                ],
-                "search_retrieval": [
-                    "search_chats_semantic",
-                    "get_chat_summary",
-                    "find_related_chats",
-                    "filter_chats_by_date_range",
-                ],
-                "automation": [
-                    "register_session_for_auto_save",
-                    "trigger_auto_save_on_session_end",
-                    "watch_chats_folder",
-                    "import_chat_from_content",
-                    "import_chat_from_local_path",
-                    "sync_agent_transcripts",
-                    "sync_cursor_agent_transcripts",
-                ],
-                "intelligence": [
-                    "extract_action_items",
-                    "build_knowledge_index",
-                    "compare_two_chats",
-                    "generate_project_brief_from_chats",
-                ],
-                "ops": [
-                    "configure_connector_settings",
-                    "compress_old_chat_archives",
-                    "deduplicate_stored_chats",
-                    "get_server_capabilities",
-                ],
+                    "search_history",
+                    "get_chat_logs",
+                    "sync_workspace_data",
+                    "compile_project_insights",
+                    "maintain_storage",
+                    "manage_session_state",
+                ]
             },
             "client_paths": self.load_config().get("client_paths", {}),
-            "total_tools": 25,
+            "total_tools": 6,
         }
+
+    def search_history(
+        self,
+        query: str = "",
+        method: str = "semantic",
+        keywords: list[str] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 50,
+        top_k: int = 10,
+        client: str = "default",
+        file_name: str | None = None,
+    ) -> list[str] | list[dict]:
+        """Unified entry point to search and filter historical transcripts."""
+        if method == "keyword":
+            kws = keywords if keywords else (query.split() if query else [])
+            return self.search_chats_by_keywords(keywords=kws, limit=limit, client=client)
+        elif method == "related":
+            ref = file_name or query
+            if not ref:
+                return [{"file": "Error: reference file required for related search.", "score": 0}]
+            return self.find_related_chats(file_name=ref, top_k=top_k, client=client)
+        elif method == "date_range":
+            if not start_date or not end_date:
+                return [{"error": "Error: start_date and end_date required for date range filter."}]
+            return self.filter_chats_by_date_range(start_date=start_date, end_date=end_date, limit=limit, client=client)
+        else:
+            return self.search_chats_semantic(query=query, top_k=top_k, client=client)
+
+    def get_chat_logs(
+        self,
+        chat_id: str | None = None,
+        view_type: str = "content",
+        start_msg: int = 1,
+        end_msg: int = 20,
+        max_msg_len: int = 1000,
+        summarize_code: bool = True,
+        page: int = 1,
+        per_page: int = 50,
+        client: str = "default",
+    ) -> str | list[str] | dict:
+        """Unified read operation for list, content slice, metadata, and summary."""
+        if not chat_id:
+            return self.list_all_stored_chats(page=page, per_page=per_page, client=client)
+        if view_type == "metadata":
+            return self.get_chat_metadata(file_name=chat_id, client=client)
+        elif view_type == "summary":
+            return self.get_chat_summary(file_name=chat_id, client=client)
+        else:
+            return self.read_chat_message_range(
+                file_name=chat_id,
+                start_msg=start_msg,
+                end_msg=end_msg,
+                max_msg_len=max_msg_len,
+                summarize_code=summarize_code,
+                client=client
+            )
+
+    def sync_workspace_data(
+        self,
+        source_type: str,
+        payload: str | dict | list | None = None,
+        title: str | None = None,
+        source_dir: str | None = None,
+        limit: int = 50,
+        client: str = "default",
+    ) -> dict | str:
+        """Unified data injection and sync pipeline."""
+        if source_type == "raw_content":
+            if not title:
+                title = f"imported_chat_{datetime.now(timezone.utc).strftime('%H%M%S')}"
+            return self.import_chat_from_content(title=title, content=payload, client=client)
+        elif source_type == "local_path":
+            path_str = str(payload) if payload else ""
+            return self.import_chat_from_local_path(source_path=path_str, title=title, client=client)
+        elif source_type == "cursor_agent_transcripts":
+            return self.sync_cursor_agent_transcripts(limit=limit)
+        else:
+            src_dir = source_dir or (str(payload) if payload else None)
+            return self.sync_agent_transcripts(client=client, source_dir=src_dir, limit=limit)
+
+    def compile_project_insights(
+        self,
+        insight_type: str,
+        target_chats: list[str] | None = None,
+        file_name: str | None = None,
+        file_name_a: str | None = None,
+        file_name_b: str | None = None,
+        brief_title: str = "Project Brief",
+        rebuild: bool = False,
+        summary_only: bool = False,
+        client: str = "default",
+    ) -> str | list[str] | dict:
+        """Unified compiler for action items, summaries, briefs, and indices."""
+        if insight_type == "action_items":
+            target = file_name or (target_chats[0] if target_chats else None)
+            if not target:
+                return ["Error: file_name or target_chats required for action item extraction."]
+            return self.extract_action_items(file_name=target, client=client)
+        elif insight_type == "knowledge_index":
+            return self.build_knowledge_index(rebuild=rebuild, summary_only=summary_only, client=client)
+        elif insight_type == "compare_chats":
+            a = file_name_a or (target_chats[0] if target_chats and len(target_chats) > 0 else None)
+            b = file_name_b or (target_chats[1] if target_chats and len(target_chats) > 1 else None)
+            if not a or not b:
+                return "Error: two target chats required for comparison."
+            return self.compare_two_chats(file_name_a=a, file_name_b=b, client=client)
+        else:
+            chats = target_chats or ([file_name] if file_name else [])
+            if not chats:
+                return "Error: target_chats or file_name required to construct project brief."
+            return self.generate_project_brief_from_chats(file_names=chats, brief_title=brief_title, client=client)
+
+    def maintain_storage(
+        self,
+        op_type: str,
+        settings: dict | None = None,
+        days_old: int | None = None,
+        dry_run: bool = True,
+        client: str = "default",
+    ) -> dict | str:
+        """Unified storage maintenance and system capabilities operation."""
+        if op_type == "compress":
+            return self.compress_old_chat_archives(days_old=days_old, client=client)
+        elif op_type == "deduplicate":
+            return self.deduplicate_stored_chats(dry_run=dry_run, client=client)
+        elif op_type == "configure":
+            if not settings:
+                return "Error: settings dictionary required to configure connector."
+            return self.configure_connector_settings(settings=settings)
+        else:
+            return self.get_server_capabilities()
+
+    def manage_session_state(
+        self,
+        action: str,
+        conversation_name: str | None = None,
+        messages: list[dict] | None = None,
+        force_save: bool = False,
+        file_name: str | None = None,
+        confirm: bool = False,
+        new_messages: list[dict] | None = None,
+        client: str = "default",
+    ) -> dict | str:
+        """Unified session state, file operations, and folder watching."""
+        if action == "save":
+            if not conversation_name or messages is None:
+                return "Error: conversation_name and messages list required for save."
+            return self.save_current_conversation_state(
+                conversation_name=conversation_name,
+                messages=messages,
+                force_save=force_save,
+                client=client
+            )
+        elif action == "register_auto_save":
+            if not conversation_name or messages is None:
+                return "Error: conversation_name and messages list required for registration."
+            return self.register_session_for_auto_save(
+                conversation_name=conversation_name,
+                messages=messages,
+                client=client
+            )
+        elif action == "trigger_auto_save":
+            return self.trigger_auto_save_on_session_end()
+        elif action == "watch_folder":
+            return self.watch_chats_folder(client=client)
+        elif action == "merge":
+            target = file_name or conversation_name
+            msgs = new_messages or messages
+            if not target or msgs is None:
+                return "Error: file_name/conversation_name and new_messages list required for merge."
+            return self.merge_conversation_into_archive(file_name=target, new_messages=msgs, client=client)
+        elif action == "export_markdown":
+            target = file_name or conversation_name
+            if not target:
+                return "Error: file_name/conversation_name required for markdown export."
+            return self.export_chat_as_markdown(file_name=target, client=client)
+        elif action == "delete":
+            target = file_name or conversation_name
+            if not target:
+                return "Error: file_name/conversation_name required for delete."
+            return self.delete_stored_chat(file_name=target, confirm=confirm, client=client)
+        else:
+            return f"Error: Unknown action '{action}'."
 
 
 _default_connector = ChatConnector()

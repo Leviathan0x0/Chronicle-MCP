@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise all 24 Universal Chat Connector tools against the live archive."""
+"""Exercise the 6 consolidated polymorphic tools against the live archive."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ PASS = "PASS"
 FAIL = "FAIL"
 results: list[dict] = []
 
-# Use isolated temp dir for destructive tests; real connector for read ops
 REAL = get_connector()
 TMP_BASE = tempfile.mkdtemp(prefix="ucc_test_")
 TEST = ChatConnector(base_dir=TMP_BASE)
@@ -23,148 +22,158 @@ TEST = ChatConnector(base_dir=TMP_BASE)
 DEMO = "universal-chat-connector-demo.json"
 SECOND = "Optimizing AntiGravity IDE and Claude Code setup.json"
 
+created_files = []
+for filename, content in [
+    (DEMO, {
+        "title": "universal-chat-connector-demo",
+        "messages": [
+            {"role": "user", "content": "U: Hello, how do I build a model context protocol server?"},
+            {"role": "assistant", "content": "To build an MCP server, you can use the python mcp sdk."},
+            {"role": "user", "content": "TODO: implement client session management. Let's do that next."},
+            {"role": "assistant", "content": "Sure, that is an action item to add."},
+            {"role": "user", "content": "What is the best way to sync cursor agent transcripts?"}
+        ]
+    }),
+    (SECOND, {
+        "title": "Optimizing AntiGravity IDE and Claude Code setup",
+        "messages": [
+            {"role": "user", "content": "How to optimize AntiGravity IDE and Claude Code setup for typescript development?"},
+            {"role": "assistant", "content": "You can configure rule files and adjust search settings."},
+            {"role": "user", "content": "Excellent advice. Thank you."}
+        ]
+    })
+]:
+    target_path = os.path.join(REAL.chats_dir, filename)
+    if not os.path.exists(target_path):
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(content, f, indent=2)
+        created_files.append(target_path)
+
 
 def record(tool: str, status: str, detail: str) -> None:
     results.append({"tool": tool, "status": status, "detail": detail[:200]})
-    icon = "✅" if status == PASS else "❌"
-    print(f"{icon} {tool}: {detail[:120]}")
+    status_label = "[PASS]" if status == PASS else "[FAIL]"
+    print(f"{status_label} {tool}: {detail[:120]}")
 
 
 def ok(tool: str, cond: bool, detail: str) -> None:
     record(tool, PASS if cond else FAIL, detail)
 
 
-# ── 1. Core (4) ─────────────────────────────────────────────────────────────
+# ── 1. Search History ────────────────────────────────────────────────────────
 
-files = REAL.list_all_stored_chats(per_page=1000)
-ok("list_all_stored_chats", len(files) > 1 and "No stored" not in files[0], f"{len(files)} files")
+hits_sem = REAL.search_history(query="mcp connector", method="semantic")
+ok("search_history (semantic)", len(hits_sem) > 0 and "error" not in str(hits_sem[0]).lower(), f"top={hits_sem[0]}")
 
-hits = REAL.search_chats_by_keywords(["mcp", "connector"])
-ok("search_chats_by_keywords", len(hits) > 0 and "error" not in hits[0].lower(), f"top={hits[0]}")
+hits_key = REAL.search_history(query="mcp", method="keyword")
+ok("search_history (keyword)", len(hits_key) > 0 and "error" not in str(hits_key[0]).lower(), f"top={hits_key[0]}")
+
+# ── 2. Get Chat Logs ─────────────────────────────────────────────────────────
+
+files = REAL.get_chat_logs()
+ok("get_chat_logs (list)", len(files) > 1 and "No stored" not in files[0], f"{len(files)} files")
 
 if DEMO in files:
-    text = REAL.read_chat_message_range(DEMO, 1, 5)
-    ok("read_chat_message_range", "U:" in text and "total messages" in text, text.split("\n")[0])
+    text = REAL.get_chat_logs(chat_id=DEMO, view_type="content", start_msg=1, end_msg=5)
+    ok("get_chat_logs (content)", "U:" in text and "total messages" in text, text.split("\n")[0])
+    
+    meta = REAL.get_chat_logs(chat_id=DEMO, view_type="metadata")
+    ok("get_chat_logs (metadata)", meta.get("message_count", 0) > 0, str(meta))
+    
+    summary = REAL.get_chat_logs(chat_id=DEMO, view_type="summary")
+    ok("get_chat_logs (summary)", len(summary) > 20, summary[:80])
 else:
-    ok("read_chat_message_range", False, f"{DEMO} missing")
+    ok("get_chat_logs (content)", False, f"{DEMO} missing")
+    ok("get_chat_logs (metadata)", False, f"{DEMO} missing")
+    ok("get_chat_logs (summary)", False, f"{DEMO} missing")
+
+# ── 3. Manage Session State ─────────────────────────────────────────────────
 
 save_msgs = [{"role": "user", "content": "full test save"}, {"role": "assistant", "content": "saved ok"}]
-save_res = TEST.save_current_conversation_state("tool-test-save", save_msgs, force_save=True)
-ok("save_current_conversation_state", "Successfully saved" in save_res, save_res)
+save_res = TEST.manage_session_state(action="save", conversation_name="tool-test-save", messages=save_msgs, force_save=True)
+ok("manage_session_state (save)", "Successfully saved" in save_res, save_res)
 
-# ── 2. High impact (4) ──────────────────────────────────────────────────────
-
-if DEMO in files:
-    meta = REAL.get_chat_metadata(DEMO)
-    ok("get_chat_metadata", meta.get("message_count", 0) > 0, str(meta))
-else:
-    ok("get_chat_metadata", False, "demo missing")
-
-merge_res = TEST.merge_conversation_into_archive(
-    "tool-test-save.json", [{"role": "user", "content": "merged message"}]
+merge_res = TEST.manage_session_state(
+    action="merge", file_name="tool-test-save.json", new_messages=[{"role": "user", "content": "merged message"}]
 )
-ok("merge_conversation_into_archive", "total: 3" in merge_res, merge_res)
+ok("manage_session_state (merge)", "total: 3" in merge_res, merge_res)
 
-export_res = TEST.export_chat_as_markdown("tool-test-save.json", "tool-test-save.md")
-ok("export_chat_as_markdown", "Exported markdown" in export_res, export_res)
+export_res = TEST.manage_session_state(action="export_markdown", file_name="tool-test-save.json")
+ok("manage_session_state (export)", "Exported markdown" in export_res, export_res)
 
-blocked = TEST.delete_stored_chat("tool-test-save.json", confirm=False)
-ok("delete_stored_chat (blocked)", "confirm=true" in blocked, blocked)
-deleted = TEST.delete_stored_chat("tool-test-save.json", confirm=True)
-ok("delete_stored_chat (confirmed)", "Deleted" in deleted, deleted)
+blocked = TEST.manage_session_state(action="delete", file_name="tool-test-save.json", confirm=False)
+ok("manage_session_state (delete blocked)", "confirm=true" in blocked, blocked)
+deleted = TEST.manage_session_state(action="delete", file_name="tool-test-save.json", confirm=True)
+ok("manage_session_state (delete confirmed)", "Deleted" in deleted, deleted)
 
-# ── 3. Search & retrieval (4) ─────────────────────────────────────────────
+# ── 4. Sync Workspace Data ──────────────────────────────────────────────────
 
-semantic = REAL.search_chats_semantic("mcp chat connector", top_k=3)
-ok("search_chats_semantic", semantic[0].get("score", 0) > 0, str(semantic[0]))
+reg = TEST.manage_session_state(action="register_auto_save", conversation_name="auto-test", messages=[{"role": "user", "content": "pending"}])
+ok("manage_session_state (register)", "registered" in reg, reg)
+auto = TEST.manage_session_state(action="trigger_auto_save")
+ok("manage_session_state (trigger auto-save)", "Successfully saved" in auto, auto)
 
-if DEMO in files:
-    summary = REAL.get_chat_summary(DEMO)
-    ok("get_chat_summary", len(summary) > 20, summary[:80])
-    related = REAL.find_related_chats(DEMO, top_k=3)
-    ok("find_related_chats", len(related) > 0, str(related[:2]))
-else:
-    ok("get_chat_summary", False, "demo missing")
-    ok("find_related_chats", False, "demo missing")
-
-today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-dated = REAL.filter_chats_by_date_range(today, today)
-ok("filter_chats_by_date_range", len(dated) > 0, f"{len(dated)} files today")
-
-# ── 4. Automation (6) ───────────────────────────────────────────────────────
-
-reg = TEST.register_session_for_auto_save("auto-test", [{"role": "user", "content": "pending"}])
-ok("register_session_for_auto_save", "registered" in reg, reg)
-auto = TEST.trigger_auto_save_on_session_end()
-ok("trigger_auto_save_on_session_end", "Successfully saved" in auto, auto)
-
-watch = REAL.watch_chats_folder()
-ok("watch_chats_folder", "new_files" in watch and "total_tracked" in watch, str(watch)[:80])
+watch = REAL.manage_session_state(action="watch_folder")
+ok("manage_session_state (watch)", "new_files" in watch and "total_tracked" in watch, str(watch)[:80])
 
 content = json.dumps({"messages": [{"role": "user", "content": "imported via content"}]})
-imported = TEST.import_chat_from_content("import-content-test", content)
-ok("import_chat_from_content", "Imported chat" in imported, imported)
+imported = TEST.sync_workspace_data(source_type="raw_content", payload=content, title="import-content-test")
+ok("sync_workspace_data (content)", "Imported chat" in imported, imported)
 
-# import from real file
-real_demo_path = os.path.join(REAL.chats_dir, DEMO) if DEMO in files else None
-if real_demo_path and os.path.exists(real_demo_path):
-    local = TEST.import_chat_from_local_path(real_demo_path, title="import-local-test")
-    ok("import_chat_from_local_path", "Imported chat" in local, local)
+if DEMO in files:
+    real_demo_path = os.path.join(REAL.chats_dir, DEMO)
+    local = TEST.sync_workspace_data(source_type="local_path", payload=real_demo_path, title="import-local-test")
+    ok("sync_workspace_data (local path)", "Imported chat" in local, local)
 else:
-    ok("import_chat_from_local_path", False, "no source file")
+    ok("sync_workspace_data (local path)", False, "no source file")
 
-sync = REAL.sync_cursor_agent_transcripts(limit=3)
-ok("sync_cursor_agent_transcripts", "imported" in sync or "error" in sync, str(sync)[:100])
+sync_uni = REAL.sync_workspace_data(source_type="agent_transcripts", client="cursor", limit=3)
+ok("sync_workspace_data (sync transcripts)", "imported" in sync_uni or "error" in sync_uni, str(sync_uni)[:100])
 
-sync_uni = REAL.sync_agent_transcripts("cursor", limit=3)
-ok("sync_agent_transcripts", "imported" in sync_uni or "error" in sync_uni, str(sync_uni)[:100])
+# ── 5. Compile Project Insights ─────────────────────────────────────────────
 
-# ── 5. Intelligence (4) ───────────────────────────────────────────────────
+target = DEMO
+if DEMO in files:
+    actions = REAL.compile_project_insights(insight_type="action_items", file_name=target)
+    ok("compile_project_insights (action items)", isinstance(actions, list) and len(actions) > 0, str(actions[:2]))
+else:
+    ok("compile_project_insights (action items)", False, "demo missing")
 
-task_file = None
-for f in files:
-    if f == "Team to-do list platform for game development.json":
-        task_file = f
-        break
-target = task_file or DEMO
-actions = REAL.extract_action_items(target)
-ok("extract_action_items", isinstance(actions, list) and len(actions) > 0, str(actions[:2]))
-
-index = REAL.build_knowledge_index(rebuild=True)
-ok("build_knowledge_index", "mcp" in index and "built_at" in index, f"mcp={len(index['mcp'])}, ui={len(index['ui_design'])}")
+index = REAL.compile_project_insights(insight_type="knowledge_index", rebuild=True)
+ok("compile_project_insights (knowledge index)", "mcp" in index and "built_at" in index, f"mcp={len(index['mcp'])}, ui={len(index['ui_design'])}")
 
 if DEMO in files and SECOND in files:
-    compare = REAL.compare_two_chats(DEMO, SECOND)
-    ok("compare_two_chats", "Compare:" in compare and "Shared topics" in compare, compare[:80])
-    brief = REAL.generate_project_brief_from_chats([DEMO, SECOND], "Full Tool Test Brief")
-    ok("generate_project_brief_from_chats", "Brief written" in brief, brief)
+    compare = REAL.compile_project_insights(insight_type="compare_chats", file_name_a=DEMO, file_name_b=SECOND)
+    ok("compile_project_insights (compare)", "Compare:" in compare and "Shared topics" in compare, compare[:80])
+    
+    brief = REAL.compile_project_insights(insight_type="project_brief", target_chats=[DEMO, SECOND], brief_title="Full Test Brief")
+    ok("compile_project_insights (brief)", "Brief written" in brief, brief)
 else:
-    ok("compare_two_chats", False, "files missing")
-    ok("generate_project_brief_from_chats", False, "files missing")
+    ok("compile_project_insights (compare)", False, "files missing")
+    ok("compile_project_insights (brief)", False, "files missing")
 
-# ── 6. Ops (4) ──────────────────────────────────────────────────────────────
+# ── 6. Maintain Storage ─────────────────────────────────────────────────────
 
-cfg = TEST.configure_connector_settings({"auto_save_message_threshold": 3})
-ok("configure_connector_settings", "auto_save_message_threshold" in cfg, cfg)
+cfg = TEST.maintain_storage(op_type="configure", settings={"auto_save_message_threshold": 3})
+ok("maintain_storage (configure)", "auto_save_message_threshold" in cfg, cfg)
 
-# compress only on temp old file
 old_chat = os.path.join(TEST.chats_dir, "old_chat.json")
 with open(old_chat, "w") as f:
     json.dump({"title": "old", "messages": [{"role": "user", "content": "old"}]}, f)
 old_ts = (datetime.now(timezone.utc).timestamp()) - (31 * 86400)
 os.utime(old_chat, (old_ts, old_ts))
-compress = TEST.compress_old_chat_archives(days_old=30)
-ok("compress_old_chat_archives", len(compress.get("compressed", [])) >= 1, str(compress))
+compress = TEST.maintain_storage(op_type="compress", days_old=30)
+ok("maintain_storage (compress)", len(compress.get("compressed", [])) >= 1, str(compress))
 
 payload = {"title": "d", "messages": [{"role": "user", "content": "dup"}]}
 for n in ("dup1.json", "dup2.json"):
     with open(os.path.join(TEST.chats_dir, n), "w") as f:
         json.dump(payload, f, indent=2)
-dedupe = TEST.deduplicate_stored_chats(dry_run=True)
-ok("deduplicate_stored_chats", len(dedupe.get("duplicates", [])) >= 1, str(dedupe))
+dedupe = TEST.maintain_storage(op_type="deduplicate", dry_run=True)
+ok("maintain_storage (deduplicate)", len(dedupe.get("duplicates", [])) >= 1, str(dedupe))
 
-caps = REAL.get_server_capabilities()
-ok("get_server_capabilities", caps.get("total_tools") == 25, f"{caps['total_tools']} tools")
+caps = REAL.maintain_storage(op_type="capabilities")
+ok("maintain_storage (capabilities)", caps.get("total_tools") == 6, f"{caps.get('total_tools')} tools")
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 
@@ -179,4 +188,9 @@ if failed:
             print(f"  - {r['tool']}: {r['detail']}")
 
 shutil.rmtree(TMP_BASE, ignore_errors=True)
+for p in created_files:
+    try:
+        os.remove(p)
+    except Exception:
+        pass
 raise SystemExit(0 if failed == 0 else 1)
