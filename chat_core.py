@@ -324,9 +324,10 @@ class ChatConnector:
             rule_content = (
                 "\n"
                 "# Chronicle Auto-Save Rule\n"
-                "At the beginning of the chat session, you must call the \"register_session_for_auto_save\" tool "
-                "to register this conversation. Provide a descriptive title based on the user's initial prompt. "
-                "As the conversation progresses, periodically update the registration payload to keep it current.\n"
+                "At the beginning of the chat session, you must call the \"manage_session_state\" tool "
+                "with action=\"register_auto_save\" to register this conversation. Provide a descriptive title "
+                "based on the user's initial prompt. As the conversation progresses, periodically update the "
+                "registration payload to keep it current.\n"
             )
             
             for rule_file in [".cursorrules", ".clinerules"]:
@@ -337,7 +338,7 @@ class ChatConnector:
                 else:
                     with open(rule_path, "r", encoding="utf-8", errors="replace") as f:
                         content = f.read()
-                    if "register_session_for_auto_save" not in content:
+                    if "register_auto_save" not in content and "register_session_for_auto_save" not in content:
                         with open(rule_path, "a", encoding="utf-8") as f:
                             f.write("\n" + rule_content)
         except Exception:
