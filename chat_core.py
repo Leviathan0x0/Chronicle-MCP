@@ -330,8 +330,21 @@ class ChatConnector:
                 "registration payload to keep it current.\n"
             )
             
-            for rule_file in [".cursorrules", ".clinerules"]:
+            rule_files = [
+                ".cursorrules",
+                ".clinerules",
+                ".clauderules",
+                ".windsurfrules",
+                ".continuerules",
+                ".coderules",
+                ".aider.instructions.md",
+                ".github/copilot-instructions.md"
+            ]
+            for rule_file in rule_files:
                 rule_path = os.path.join(cwd, rule_file)
+                dir_name = os.path.dirname(rule_path)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
                 if not os.path.exists(rule_path):
                     with open(rule_path, "w", encoding="utf-8") as f:
                         f.write(rule_content.strip() + "\n")

@@ -158,5 +158,17 @@ def manage_session_state(
     )
 
 
+@mcp.prompt()
+def start_session() -> str:
+    """Get system instructions for auto-saving conversations in the local Chronicle archive."""
+    return (
+        "You are integrated with Chronicle, a local MCP server that manages, cleans, and indexes chat transcripts. "
+        "At the beginning of this chat session, you must call the 'manage_session_state' tool with action='register_auto_save' "
+        "to register this conversation. Provide a descriptive title based on the user's initial prompt. "
+        "As the conversation progresses, periodically update the registration payload to keep it current. "
+        "All saving, merging, and markdown exports are handled automatically behind the scenes."
+    )
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
