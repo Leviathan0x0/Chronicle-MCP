@@ -1,5 +1,10 @@
 # Chronicle: Universal Chat Connector Model Context Protocol Server
 
+[![Build Status](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/test.yml/badge.svg)](https://github.com/Leviathan0x0/Chronicle-MCP/actions)
+[![PyPI version](https://img.shields.io/pypi/v/chronicle-mcp-server.svg)](https://pypi.org/project/chronicle-mcp-server/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python Version Support](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 Chronicle is a production-grade Model Context Protocol (MCP) server designed to sync, clean, format, and index local artificial intelligence chat transcripts. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
 ## Key Architectural Capabilities
@@ -14,6 +19,13 @@ AI providers and editor clients save conversation logs in diverse formats. Chron
 Large chat logs can quickly exhaust context windows and increase API costs. Chronicle implements proactive token-saving mechanisms:
 * **Code Block Summarization**: Automatically replaces verbose code blocks with metadata summaries indicating the programming language and line count. This behavior can be disabled on demand to read full code snippets.
 * **Length Limiting**: Truncates extremely long individual messages at a configurable character threshold, appending a notice that the user can re-run the tool with expanded limits if necessary.
+
+#### Context Window Token Savings Graph
+To verify these savings, we executed multi-turn conversation benchmarks. The graph below displays total token usage over a sequence of message turns:
+
+![Context Window Token Usage Comparison](assets/token_savings.png)
+
+By condensing repetitive syntax and large raw code snippets, Chronicle achieves up to 40 percent token savings, directly lowering API usage costs and preventing context-window exhaustion.
 
 ---
 
@@ -246,12 +258,12 @@ Since editors (like Cursor or VS Code) do not notify MCP servers when a chat win
 The Chronicle server includes an exit handler registered via Python's `atexit` module. When you close a chat tab or close the editor, the editor terminates the stdio connection, shutting down the Chronicle process. Upon receiving this shutdown trigger, the server automatically flushes the registered pending session to the local chats folder.
 
 ### 2. Automatic Workspace Rules Generation
-For this flush to succeed, the active chat session must be registered during the conversation. Chronicle handles this setup automatically: upon server startup, it checks the active project workspace root directory and automatically creates or appends the required rules to the `.cursorrules` and `.clinerules` files.
+For this flush to succeed, the active chat session must be registered during the conversation. Chronicle handles this setup automatically: upon server startup, it checks the active project workspace root directory and automatically creates or appends the required rules to all major rule files (such as `.cursorrules`, `.clinerules`, `.windsurfrules`, `.clauderules`, etc.).
 
-This ensures that the AI agent in Cursor or VS Code (via Cline) is automatically instructed to register the session at the start of the chat. The appended rule states:
+This ensures that the AI agent is automatically instructed to register the session at the start of the chat. The generated rule states:
 
 ```text
-At the beginning of the chat session, you must call the "register_session_for_auto_save" tool to register this conversation. Provide a descriptive title based on the user's initial prompt. As the conversation progresses, periodically update the registration payload to keep it current.
+At the beginning of the chat session, you must call the "manage_session_state" tool with action="register_auto_save" to register this conversation. Provide a descriptive title based on the user's initial prompt. As the conversation progresses, periodically update the registration payload to keep it current.
 ```
 
 This ensures that the chat history is registered dynamically, and Chronicle will write the complete history to your storage folder as soon as the editor terminates the connection.
@@ -273,6 +285,43 @@ To test all 27 tools against the live storage connector:
 ```bash
 python3 test_all_tools.py
 ```
+
+---
+
+## Market Comparison Matrix
+
+| Features | Chronicle MCP | Mem0 | Raw RAG / Naive VecDB |
+| :--- | :--- | :--- | :--- |
+| **Cloud Dependency** | Local first (Zero Cloud dependencies) | Cloud-reliant | Cloud or complex local setup |
+| **Token Savings** | Up to 40% reduction (Smart code folding and pruning) | None (transfers full history) | None |
+| **Setup Complexity** | 1-click CLI installer (`chronicle add`) | Requires API keys and database configs | High (VecDB setups and loaders) |
+| **Auto-Save Support** | Native via workspace rules and exit hooks | Requires manual application integration | None |
+| **Local Resources** | Minimal CPU and RAM (light TF-IDF) | Heavy | High (vector indexing overhead) |
+
+---
+
+## Contributing
+
+We welcome community contributions. To get started:
+1. Fork the repository and create a new branch.
+2. Write unit tests for new behavior inside `test_chat_connector.py`.
+3. Verify all code changes by running the test suite locally:
+   ```bash
+   python3 -m unittest test_chat_connector.py
+   python3 test_all_tools.py
+   ```
+4. Ensure code formatting is clean and all imports are properly sorted.
+5. Submit a pull request detailing your changes and test coverage.
+
+---
+
+## Public Roadmap
+
+Planned future features and enhancements for Chronicle:
+* **Local Embeddings**: Add optional local vector retrieval using lightweight ONNX models.
+* **Database Auditing**: Automatic cache cleanups and data integrity audits for historical logs.
+* **Dynamic Tailoring**: Specific prompt formats optimized for different LLM host architectures (Claude, GPT, Gemini).
+* **Extended IDE Support**: Out-of-the-box config injection scripts for additional emerging developer environments.
 
 ---
 
