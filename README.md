@@ -1,5 +1,9 @@
 # Chronicle: Universal Chat Connector Model Context Protocol Server
 
+<p align="center">
+  <img src="assets/logo.png" alt="Chronicle Logo" width="200" />
+</p>
+
 [![Build Status](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/test.yml/badge.svg)](https://github.com/Leviathan0x0/Chronicle-MCP/actions)
 [![PyPI version](https://img.shields.io/pypi/v/chronicle-mcp-server.svg)](https://pypi.org/project/chronicle-mcp-server/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
