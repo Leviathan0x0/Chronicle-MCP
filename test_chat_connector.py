@@ -225,6 +225,78 @@ class ChatConnectorTests(unittest.TestCase):
         result = self.cc.get_chat_logs(chat_id="../secrets.json")
         self.assertIn("Security block", result)
 
+    def test_temporal_decay(self):
+        # Create identical chats with different mtimes
+        alpha_path = self._write_chat("decay_alpha.json", [{"role": "user", "content": "unique keyword search testing"}])
+        beta_path = self._write_chat("decay_beta.json", [{"role": "user", "content": "unique keyword search testing"}])
+        
+        import time
+        now = time.time()
+        past_45_days = now - (45 * 86400)
+        past_1_day = now - (1 * 86400)
+        
+        os.utime(alpha_path, (past_45_days, past_45_days))
+        os.utime(beta_path, (past_1_day, past_1_day))
+        
+        results = self.cc.search_chats_semantic(query="unique keyword search testing", top_k=2)
+        self.assertEqual(len(results), 2)
+        # The first result (highest score) must be decay_beta.json (newer)
+        self.assertEqual(results[0]["file"], "decay_beta.json")
+        self.assertEqual(results[1]["file"], "decay_alpha.json")
+        self.assertGreater(results[0]["score"], results[1]["score"])
+
+    def test_heuristic_summary_pruning(self):
+        messages = [
+            {"role": "user", "content": "initial issue description"},
+            {"role": "assistant", "content": "intermediate message with no keywords"},
+            {"role": "user", "content": "another intermediate message containing keyword error"},
+            {"role": "assistant", "content": "intermediate message containing code block\n```python\nprint('hello')\n```"},
+            {"role": "assistant", "content": "final assistant reply"}
+        ]
+        chat_path = self._write_chat("pruned_chat.json", messages)
+        
+        import time
+        now = time.time()
+        past_20_days = now - (20 * 86400)
+        os.utime(chat_path, (past_20_days, past_20_days))
+        
+        # summary_pruning_days_threshold defaults to 14, so 20 days is older and should trigger pruning
+        result = self.cc.read_chat_message_range("pruned_chat.json", summarize_code=False)
+        self.assertIn("Pruned Historical Transcript", result)
+        self.assertIn("initial issue description", result)
+        self.assertIn("another intermediate message containing keyword error", result)
+        self.assertIn("print('hello')", result)
+        self.assertIn("final assistant reply", result)
+        # The message without keywords or code blocks should be pruned
+        self.assertNotIn("intermediate message with no keywords", result)
+
+    def test_serialized_state_indexing(self):
+        # Create a new chat and sync using the save action to trigger index creation
+        self.cc.manage_session_state(
+            action="save",
+            conversation_name="index_alpha",
+            messages=[{"role": "user", "content": "indexing verification test"}],
+            force_save=True
+        )
+        
+        # Verify index was written and contains keywords
+        index_file = self.cc.serialized_index_path
+        self.assertTrue(os.path.exists(index_file))
+        
+        with open(index_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("timestamps", data)
+        self.assertIn("index", data)
+        
+        # Verify searching by keyword uses the index and finds it
+        hits = self.cc.search_history(query="verification", method="keyword")
+        self.assertIn("index_alpha.json", hits)
+        
+        # Delete the file and check that the index is updated
+        self.cc.manage_session_state(action="delete", file_name="index_alpha.json", confirm=True)
+        hits2 = self.cc.search_history(query="verification", method="keyword")
+        self.assertNotIn("index_alpha.json", hits2)
+
 
 if __name__ == "__main__":
     unittest.main()

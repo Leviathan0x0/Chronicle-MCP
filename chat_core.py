@@ -298,6 +298,17 @@ def _cosine_similarity(a: Counter[str], b: Counter[str]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def apply_temporal_decay(raw_score: float, doc_timestamp: float, half_life_days: int = 30) -> float:
+    """Applies exponential decay to a lexical search score based on document age."""
+    import time
+    current_time = time.time()
+    delta_t_seconds = max(0.0, current_time - doc_timestamp)
+    delta_t_days = delta_t_seconds / 86400.0
+    decay_constant = math.log(2) / half_life_days
+    decay_multiplier = math.exp(-decay_constant * delta_t_days)
+    return raw_score * decay_multiplier
+
+
 class ChatConnector:
     def __init__(self, base_dir: str | None = None, cursor_transcripts_dir: str | None = None):
         self.base_dir = base_dir or DEFAULT_BASE_DIR
@@ -306,6 +317,7 @@ class ChatConnector:
         self.config_path = os.path.join(self.base_dir, "mcp_config.json")
         self.watch_state_path = os.path.join(self.base_dir, ".watch_state.json")
         self.index_path = os.path.join(self.base_dir, "knowledge_index.json")
+        self.serialized_index_path = os.path.join(self.base_dir, ".chronicle_index.json")
         self.cursor_transcripts_dir = cursor_transcripts_dir or DEFAULT_CURSOR_TRANSCRIPTS
         self._pending_session: dict[str, Any] | None = None
         os.makedirs(self.chats_dir, exist_ok=True)
@@ -357,6 +369,34 @@ class ChatConnector:
         except Exception:
             pass
 
+    def _prune_transcript(self, plain_messages: list[str]) -> list[str]:
+        if len(plain_messages) <= 2:
+            return plain_messages
+        pruned = []
+        pruned.append(plain_messages[0])
+        keywords = ["error", "exception", "fix", "resolve", "schema", "version"]
+        for msg in plain_messages[1:-1]:
+            prefix_match = re.match(r"^(U: |A: |System: )", msg)
+            prefix = prefix_match.group(0) if prefix_match else ""
+            content = msg[len(prefix):]
+            lines = content.splitlines()
+            preserved_lines = []
+            in_code_block = False
+            for line in lines:
+                if line.strip().startswith("```"):
+                    preserved_lines.append(line)
+                    in_code_block = not in_code_block
+                elif in_code_block:
+                    preserved_lines.append(line)
+                else:
+                    line_lower = line.lower()
+                    if any(kw in line_lower for kw in keywords):
+                        preserved_lines.append(line)
+            if preserved_lines:
+                pruned.append(prefix + "\n".join(preserved_lines))
+        pruned.append(plain_messages[-1])
+        return pruned
+
     # ── Config ──────────────────────────────────────────────────────────────
 
     def load_config(self) -> dict:
@@ -369,6 +409,7 @@ class ChatConnector:
                 "claude": "chats/claude",
             },
             "compression_days_threshold": 30,
+            "summary_pruning_days_threshold": 14,
             "cursor_transcripts_dir": self.cursor_transcripts_dir,
             "transcripts_dirs": {
                 c: resolve_default_transcripts_dir(c)
@@ -426,6 +467,129 @@ class ChatConnector:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
+    def _load_serialized_index(self) -> dict:
+        if not os.path.exists(self.serialized_index_path):
+            return {"timestamps": {}, "index": {}}
+        try:
+            with open(self.serialized_index_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {"timestamps": {}, "index": {}}
+            data.setdefault("timestamps", {})
+            data.setdefault("index", {})
+            return data
+        except Exception:
+            return {"timestamps": {}, "index": {}}
+
+    def _update_file_index(self, file_name: str, client: str = "default") -> None:
+        file_path = self._safe_chat_path(file_name, client)
+        if not file_path or not os.path.exists(file_path):
+            return
+        try:
+            mtime = os.path.getmtime(file_path)
+            index_data = self._load_serialized_index()
+            doc_key = f"{client}/{file_name}"
+
+            # Read and parse
+            raw = self._read_chat_file(file_path)
+            text = " ".join(parse_to_plain_text(raw))
+            tokens = _tokenize(text)
+            counts = Counter(tokens)
+
+            # Clean old index entries
+            timestamps = index_data["timestamps"]
+            index_map = index_data["index"]
+
+            for keyword, docs in list(index_map.items()):
+                if doc_key in docs:
+                    del docs[doc_key]
+                if not docs:
+                    del index_map[keyword]
+
+            # Insert new entries
+            for keyword, count in counts.items():
+                index_map.setdefault(keyword, {})[doc_key] = count
+
+            timestamps[doc_key] = mtime
+            self._write_json(self.serialized_index_path, index_data)
+        except Exception:
+            pass
+
+    def _remove_file_from_index(self, file_name: str, client: str = "default") -> None:
+        doc_key = f"{client}/{file_name}"
+        index_data = self._load_serialized_index()
+        timestamps = index_data.get("timestamps", {})
+        index_map = index_data.get("index", {})
+
+        changed = False
+        if doc_key in timestamps:
+            del timestamps[doc_key]
+            changed = True
+
+        for keyword, docs in list(index_map.items()):
+            if doc_key in docs:
+                del docs[doc_key]
+                changed = True
+            if not docs:
+                del index_map[keyword]
+
+        if changed:
+            self._write_json(self.serialized_index_path, index_data)
+
+    def _sync_serialized_index(self, client: str = "default") -> dict:
+        index_data = self._load_serialized_index()
+        timestamps = index_data.setdefault("timestamps", {})
+        index_map = index_data.setdefault("index", {})
+
+        chats_dir = self.resolve_chats_dir(client)
+        files = self._list_json_files(client)
+
+        changed = False
+        current_keys = set()
+        for file in files:
+            doc_key = f"{client}/{file}"
+            current_keys.add(doc_key)
+            file_path = os.path.join(chats_dir, file)
+            try:
+                mtime = os.path.getmtime(file_path)
+                if doc_key not in timestamps or timestamps[doc_key] < mtime:
+                    raw = self._read_chat_file(file_path)
+                    text = " ".join(parse_to_plain_text(raw))
+                    tokens = _tokenize(text)
+                    counts = Counter(tokens)
+
+                    # Remove old entries
+                    for kw, docs in list(index_map.items()):
+                        if doc_key in docs:
+                            del docs[doc_key]
+                        if not docs:
+                            del index_map[kw]
+
+                    # Add new entries
+                    for kw, count in counts.items():
+                        index_map.setdefault(kw, {})[doc_key] = count
+
+                    timestamps[doc_key] = mtime
+                    changed = True
+            except Exception:
+                pass
+
+        # Remove deleted files
+        for doc_key in list(timestamps.keys()):
+            if doc_key.startswith(f"{client}/") and doc_key not in current_keys:
+                del timestamps[doc_key]
+                for kw, docs in list(index_map.items()):
+                    if doc_key in docs:
+                        del docs[doc_key]
+                    if not docs:
+                        del index_map[kw]
+                changed = True
+
+        if changed:
+            self._write_json(self.serialized_index_path, index_data)
+
+        return index_data
+
     def _list_json_files(self, client: str = "default") -> list[str]:
         chats_dir = self.resolve_chats_dir(client)
         return sorted(
@@ -460,16 +624,34 @@ class ChatConnector:
     def search_chats_by_keywords(
         self, keywords: list[str], limit: int = 50, client: str = "default"
     ) -> list[str]:
-        matching_files: list[tuple[str, int]] = []
         try:
-            for file in self._list_json_files(client):
-                file_path = os.path.join(self.resolve_chats_dir(client), file)
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read().lower()
-                match_count = sum(1 for kw in keywords if kw.lower() in content)
+            index_data = self._sync_serialized_index(client)
+            index_map = index_data.get("index", {})
+            doc_scores = {}
+            cleaned_kws = [kw.lower() for kw in keywords if kw]
+            for kw in cleaned_kws:
+                tokens = _tokenize(kw)
+                if not tokens:
+                    continue
+                matching_docs_for_kw = None
+                for t in tokens:
+                    docs_with_t = set(index_map.get(t, {}).keys())
+                    if matching_docs_for_kw is None:
+                        matching_docs_for_kw = docs_with_t
+                    else:
+                        matching_docs_for_kw &= docs_with_t
+                if matching_docs_for_kw:
+                    for doc_key in matching_docs_for_kw:
+                        if doc_key.startswith(f"{client}/"):
+                            doc_scores[doc_key] = doc_scores.get(doc_key, 0) + 1
+
+            matching_files = []
+            for doc_key, match_count in doc_scores.items():
                 if match_count >= 1:
-                    matching_files.append((file, match_count))
-            matching_files.sort(key=lambda x: x[1], reverse=True)
+                    file_name = doc_key.split("/", 1)[1]
+                    matching_files.append((file_name, match_count))
+
+            matching_files.sort(key=lambda x: (-x[1], x[0]))
             results = [item[0] for item in matching_files]
             if not results:
                 return ["No matching conversations found."]
@@ -501,6 +683,36 @@ class ChatConnector:
             total_msgs = len(plain_messages)
             if total_msgs == 0:
                 return "This file contains no extractable conversation messages."
+
+            config = self.load_config()
+            prune_threshold = config.get("summary_pruning_days_threshold", 14)
+            mtime = os.path.getmtime(file_path)
+            import time
+            age_days = (time.time() - mtime) / 86400.0
+            is_pruned = age_days > prune_threshold
+
+            if is_pruned:
+                pruned_messages = self._prune_transcript(plain_messages)
+                processed_messages = []
+                for msg in pruned_messages:
+                    prefix_match = re.match(r"^(U: |A: |System: )", msg)
+                    prefix = prefix_match.group(0) if prefix_match else ""
+                    content = msg[len(prefix):]
+                    if summarize_code:
+                        content = summarize_text_code_blocks(content)
+                    if max_msg_len > 0 and len(content) > max_msg_len:
+                        content = (
+                            content[:max_msg_len]
+                            + f"\n... [Truncated {len(content) - max_msg_len} characters for token efficiency] ..."
+                        )
+                    processed_messages.append(prefix + content)
+                output = (
+                    f"--- Showing Pruned Historical Transcript (Age: {age_days:.1f} days, Threshold: {prune_threshold} days) ---\n"
+                    f"[Pruning active: Turn 1, code blocks, keyword lines, and Turn N preserved]\n\n"
+                    + "\n".join(processed_messages)
+                )
+                return output
+
             s_idx = max(0, start_msg - 1)
             e_idx = min(total_msgs, end_msg)
             processed_messages = []
@@ -554,6 +766,7 @@ class ChatConnector:
         try:
             self._write_json(file_path, payload)
             self._pending_session = None
+            self._update_file_index(file_name, client)
             return f"Successfully saved state to {file_name} ({len(messages)} messages logged)."
         except Exception as e:
             return f"Error writing file: {e}"
@@ -573,6 +786,7 @@ class ChatConnector:
             return f"File {file_name} not found."
         try:
             os.remove(file_path)
+            self._remove_file_from_index(file_name, client)
             return f"Deleted {os.path.basename(file_path)}."
         except Exception as e:
             return f"Delete error: {e}"
@@ -612,6 +826,7 @@ class ChatConnector:
         existing["messages"] = merged
         existing["merged_at"] = self._now_iso()
         self._write_json(file_path, existing)
+        self._update_file_index(file_name, client)
         return f"Merged {len(new_messages)} messages into {os.path.basename(file_path)} (total: {len(merged)})."
 
     def export_chat_as_markdown(
@@ -648,6 +863,7 @@ class ChatConnector:
             return [{"file": "No stored chats found.", "score": 0}]
         docs: list[str] = []
         names: list[str] = []
+        timestamps: list[float] = []
         chats_dir = self.resolve_chats_dir(client)
         for file in files:
             path = os.path.join(chats_dir, file)
@@ -659,12 +875,22 @@ class ChatConnector:
             except Exception:
                 docs.append(file)
                 names.append(file)
+            try:
+                mtime = os.path.getmtime(path)
+            except Exception:
+                mtime = 0.0
+            timestamps.append(mtime)
+
         vectors, _ = _tfidf_vectors(docs)
         query_vec = _tfidf_vectors([query])[0][0]
-        scored = [
-            {"file": name, "score": round(_cosine_similarity(query_vec, vec), 4)}
-            for name, vec in zip(names, vectors)
-        ]
+        scored = []
+        for name, vec, mtime in zip(names, vectors, timestamps):
+            raw_score = _cosine_similarity(query_vec, vec)
+            decayed_score = apply_temporal_decay(raw_score, mtime)
+            scored.append({
+                "file": name,
+                "score": round(decayed_score, 4)
+            })
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:top_k]
 
@@ -804,6 +1030,7 @@ class ChatConnector:
             path = os.path.join(self.resolve_chats_dir(client), f"{safe}.json")
             data["imported_at"] = self._now_iso()
             self._write_json(path, data)
+            self._update_file_index(f"{safe}.json", client)
             return f"Imported chat as {safe}.json ({len(parse_to_plain_text(data))} messages)."
         except Exception as e:
             return f"Import error: {e}"
@@ -861,6 +1088,7 @@ class ChatConnector:
                     "synced_at": self._now_iso(),
                 }
                 self._write_json(dest, payload)
+                self._update_file_index(f"{dest_name}.json", client)
                 imported.append({
                     "file": file,
                     "status": "imported",
@@ -1003,6 +1231,7 @@ class ChatConnector:
             "auto_save_message_threshold",
             "client_paths",
             "compression_days_threshold",
+            "summary_pruning_days_threshold",
             "cursor_transcripts_dir",
             "transcripts_dirs",
         }
