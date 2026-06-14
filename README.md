@@ -1,7 +1,7 @@
 # Chronicle: Universal Chat Connector Model Context Protocol Server
 
 <p align="center">
-  <img src="assets/logo.png" alt="Chronicle Logo" width="200" />
+  <img src="assets/logo.png" alt="Chronicle Logo" style="width: 100%; border-radius: 16px;" />
 </p>
 
 [![Build Status](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/test.yml/badge.svg)](https://github.com/Leviathan0x0/Chronicle-MCP/actions)
