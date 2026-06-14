@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: chronicle-mcp-server
-Version: 1.1.7
+Version: 1.1.8
 Summary: Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.
 Author: Leviathan
 License: MIT
@@ -13,12 +13,35 @@ License-File: LICENSE
 Requires-Dist: mcp>=1.0.0
 Dynamic: license-file
 
-# Chronicle: Universal Chat Connector Model Context Protocol Server
+# Chronicle (Universal Chat Connector)
 
-[![Build Status](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/test.yml/badge.svg)](https://github.com/Leviathan0x0/Chronicle-MCP/actions)
-[![PyPI version](https://img.shields.io/pypi/v/chronicle-mcp-server.svg)](https://pypi.org/project/chronicle-mcp-server/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version Support](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+<p align="center">
+  <img src="assets/logo.png" alt="Chronicle Logo" style="width: 100%; border-radius: 16px;" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/Leviathan0x0/Chronicle-MCP"><img src="https://img.shields.io/github/stars/Leviathan0x0/Chronicle-MCP.svg?style=flat-square" alt="GitHub Stars" /></a>
+  
+  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/v/chronicle-mcp-server.svg?style=flat-square" alt="PyPI Version" /></a>
+  
+  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/dm/chronicle-mcp-server.svg?style=flat-square" alt="PyPI Downloads" /></a>
+  
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT" /></a>
+  
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square" alt="Python Support" /></a>
+</p>
+
+<p align="center">
+  <a href="#key-architectural-capabilities">Why</a> ·
+  <a href="#command-line-interface-mechanics">CLI Mechanics</a> ·
+  <a href="#tool-reference-catalog">Tool Catalog</a> ·
+  <a href="#installation-and-configuration">Installation</a> ·
+  <a href="#automatic-session-saving-in-cursor-and-vs-code">Auto-Save</a> ·
+  <a href="#running-verification-and-tests">Tests</a> ·
+  <a href="#market-comparison-matrix">Comparison</a> ·
+  <a href="#public-roadmap">Roadmap</a> ·
+  <a href="#license">License</a>
+</p>
 
 Chronicle is a production-grade Model Context Protocol (MCP) server designed to sync, clean, format, and index local artificial intelligence chat transcripts. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
