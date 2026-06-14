@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Leviathan0x0/Chronicle-MCP"><img src="https://img.shields.io/github/stars/Leviathan0x0/Chronicle-MCP.svg?style=flat-square" alt="GitHub Stars" /></a>
+  <a href="https://github.com/Leviathan0x0/Chronicle-MCP"><img src="https://img.shields.io/github/stars/Leviathan0x0/Chronicle-MCP?style=flat-square" alt="GitHub Stars" /></a>
   ‎ 
-  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/v/chronicle-mcp-server.svg?style=flat-square" alt="PyPI Version" /></a>
+  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/v/chronicle-mcp-server?style=flat-square" alt="PyPI Version" /></a>
   ‎ 
-  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/dm/chronicle-mcp-server.svg?style=flat-square" alt="PyPI Downloads" /></a>
+  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/dm/chronicle-mcp-server?style=flat-square&label=installs" alt="PyPI Downloads" /></a>
   ‎ 
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT" /></a>
   ‎ 
