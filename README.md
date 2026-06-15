@@ -68,7 +68,7 @@ It accepts options like `--chats-folder` to configure custom storage directories
 Chronicle features an interactive, zero-dependency TTY setup wizard. Running `chronicle setup` or executing `chronicle` without arguments in an interactive terminal starts the setup flow:
 
 > [!TIP]
-> The setup wizard is styled with a premium purple theme, supporting arrow-key navigation, spacebar toggles, inline input editing, and real-time path validation!
+> The setup wizard is styled with supporting arrow-key navigation, spacebar toggles, inline input editing, and real-time path validation!
 
 * **Phase 1: Monolithic Split Engine**: Interactive option to partition monolithic conversation histories into distinct thread logs in your storage folder.
 * **Phase 2: Storage Directory Configuration**: Configures your local chats directory (defaulting to `~/universal-chats`).
