@@ -481,6 +481,71 @@ class ChatConnectorTests(unittest.TestCase):
         self.assertIn("Would you like to proceed with installing", stdout)
         self.assertIn("Cursor", stdout)
 
+    def test_cli_setup_wizard_antigravity_fallback(self):
+        import sys
+        import subprocess
+        # Inputs:
+        # Phase 1: Enter (skip split) -> ""
+        # Phase 2: Enter (default storage path) -> ""
+        # Phase 3: "8" (select Antigravity) -> "8"
+        # Select Antigravity options: "1, 2" -> "1, 2"
+        inputs = "\n\n8\n1, 2\n"
+        
+        env = dict(os.environ)
+        env["HOME"] = self.tmp
+        
+        process = subprocess.Popen(
+            [sys.executable, "cli.py", "setup"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+        stdout, stderr = process.communicate(input=inputs, timeout=5)
+        
+        self.assertEqual(process.returncode, 0)
+        self.assertIn("Antigravity", stdout)
+        self.assertIn("Antigravity IDE", stdout)
+        self.assertIn("Antigravity 2.0", stdout)
+        
+        # Ensure Antigravity CLI is not in the installed apps in the Live Dashboard
+        live_section = stdout.split("Chronicle Environment Live")[1]
+        self.assertNotIn("Antigravity CLI", live_section)
+
+    def test_cli_setup_wizard_interactive_mocked(self):
+        from unittest.mock import patch
+        import cli
+        
+        # We mock getch to press:
+        # Down (1), Space (toggle VS Code), Down (2), Down (3), Space (toggle Claude), Down (4), Down (5), Down (6), Space (toggle Antigravity), Down (7), Space (toggle Antigravity IDE), Enter (confirm)
+        # Sequence of keys:
+        # Down: '\x1b[B'
+        # Space: ' '
+        # Enter: '\n'
+        mock_keys = [
+            '\x1b[B', ' ',  # vscode toggled
+            '\x1b[B', '\x1b[B', ' ',  # claude toggled
+            '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', ' ',  # antigravity toggled (now sub-options are visible!)
+            '\x1b[B', ' ',  # antigravity-ide toggled
+            '\n'
+        ]
+        
+        with patch('cli.getch', side_effect=mock_keys), \
+             patch('sys.stdin.isatty', return_value=True), \
+             patch('sys.stdout.write'):
+            
+            result = cli.select_apps_interactive()
+            
+            # Verify which items are checked
+            checked_ids = [item["id"] for item in result if item["checked"]]
+            self.assertIn("vscode", checked_ids)
+            self.assertIn("claude", checked_ids)
+            self.assertIn("antigravity", checked_ids)
+            self.assertIn("antigravity-ide", checked_ids)
+            self.assertNotIn("cursor", checked_ids)
+            self.assertNotIn("antigravity-cli", checked_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

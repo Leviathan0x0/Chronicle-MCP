@@ -81,6 +81,16 @@ def get_config_path(app_name):
         else:
             return home / ".config" / "ChatGPT" / "mcp.json"
 
+    # 8. Antigravity Setup
+    if app == "antigravity":
+        return home / ".antigravity" / "mcp.json"
+    if app == "antigravityide":
+        return home / ".antigravity-ide" / "mcp.json"
+    if app == "antigravity2.0" or app == "antigravity20":
+        return home / ".antigravity-2.0" / "mcp.json"
+    if app == "antigravitycli":
+        return home / ".antigravity-cli" / "mcp.json"
+
     # Generic Fallback Scheme for Emerging Vibe Coding Tools
     if system == "darwin":
         home_dot_path = home / f".{app}" / "mcp.json"
@@ -184,6 +194,119 @@ def set_chats_folder(folder_path):
         json.dump(settings, f, indent=2)
     print(f"Successfully set chats directory to: {resolved_path}")
 
+def getch():
+    import sys
+    import tty
+    import termios
+    import select
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == '\x1b':
+            r, _, _ = select.select([sys.stdin], [], [], 0.05)
+            if r:
+                ch += sys.stdin.read(2)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
+def select_apps_interactive():
+    import sys
+    
+    options = [
+        {"id": "cursor", "title": "Cursor", "checked": False},
+        {"id": "vscode", "title": "VS Code (Cline / Roo Code)", "checked": False},
+        {"id": "trae", "title": "Trae IDE", "checked": False},
+        {"id": "claude", "title": "Claude Code", "checked": False},
+        {"id": "windsurf", "title": "Windsurf", "checked": False},
+        {"id": "claude-desktop", "title": "Claude Desktop", "checked": False},
+        {"id": "chatgpt-desktop", "title": "ChatGPT Desktop", "checked": False},
+        {"id": "antigravity", "title": "Antigravity", "checked": False},
+        {"id": "other", "title": "Other (Custom Entry)", "checked": False}
+    ]
+    
+    sub_options = [
+        {"id": "antigravity-ide", "title": "Antigravity IDE", "checked": False, "indent": True},
+        {"id": "antigravity-2.0", "title": "Antigravity 2.0", "checked": False, "indent": True},
+        {"id": "antigravity-cli", "title": "Antigravity CLI", "checked": False, "indent": True}
+    ]
+    
+    def get_visible_items():
+        visible = []
+        for opt in options:
+            visible.append(opt)
+            if opt["id"] == "antigravity" and opt["checked"]:
+                for sub in sub_options:
+                    visible.append(sub)
+        return visible
+
+    cursor_idx = 0
+    lines_count = 0
+    
+    print("\n\033[1;35mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
+    print("\033[90m  (Use arrow keys to navigate, Space to toggle, Enter to confirm)\033[0m")
+    
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+    
+    try:
+        while True:
+            visible_items = get_visible_items()
+            if cursor_idx >= len(visible_items):
+                cursor_idx = len(visible_items) - 1
+            if cursor_idx < 0:
+                cursor_idx = 0
+                
+            if lines_count > 0:
+                sys.stdout.write("\033[F" * lines_count + "\033[J")
+                
+            lines = []
+            for idx, item in enumerate(visible_items):
+                is_focused = (idx == cursor_idx)
+                
+                if item["checked"]:
+                    checked_str = "\033[1;32m[✓]\033[0m"
+                else:
+                    checked_str = "\033[90m[ ]\033[0m"
+                    
+                indent = "    " if item.get("indent") else "  "
+                pointer = "\033[1;36m>\033[0m " if is_focused else "  "
+                
+                if is_focused:
+                    text = f"\033[1;37m{item['title']}\033[0m"
+                else:
+                    text = f"\033[37m{item['title']}\033[0m"
+                    
+                lines.append(f"{pointer}{indent}{checked_str} {text}")
+                
+            sys.stdout.write("\n".join(lines) + "\n")
+            sys.stdout.flush()
+            lines_count = len(lines)
+            
+            key = getch()
+            if key == '\x1b[A':  # Up
+                cursor_idx = (cursor_idx - 1) % len(visible_items)
+            elif key == '\x1b[B':  # Down
+                cursor_idx = (cursor_idx + 1) % len(visible_items)
+            elif key == ' ':  # Space
+                item = visible_items[cursor_idx]
+                item["checked"] = not item["checked"]
+                
+                if item["id"] == "antigravity" and not item["checked"]:
+                    for sub in sub_options:
+                        sub["checked"] = False
+            elif key == '\r' or key == '\n':  # Enter
+                break
+            elif key == '\x03' or key == '\x1b':  # Ctrl+C or Escape
+                raise KeyboardInterrupt
+    finally:
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+        
+    return visible_items
+
 def run_setup_wizard():
     # Phase 1: The Temporal Split
     print("\033[1;36m── Chronicle Archive Setup ─────────────────────────────────────\033[0m")
@@ -225,7 +348,11 @@ def run_setup_wizard():
         print("\033[32m ✓ Successfully split logs.\033[0m")
 
     # Phase 3: MCQ
-    supported_targets = ["cursor", "vscode", "trae", "claude", "windsurf", "claude-desktop", "chatgpt-desktop", "cursor-agent"]
+    supported_targets = [
+        "cursor", "vscode", "trae", "claude", "windsurf", 
+        "claude-desktop", "chatgpt-desktop", "antigravity",
+        "antigravity-ide", "antigravity-2.0", "antigravity-cli"
+    ]
     
     app_mapping = {
         1: "cursor",
@@ -235,53 +362,109 @@ def run_setup_wizard():
         5: "windsurf",
         6: "claude-desktop",
         7: "chatgpt-desktop",
-        8: "cursor-agent"
+        8: "antigravity"
     }
 
     selected_apps = []
     while True:
-        print("\nPlease select the applications/IDEs where you want to install Chronicle MCP:")
-        print("  [1] Cursor Desktop")
-        print("  [2] VS Code (Cline / Roo Code)")
-        print("  [3] Trae IDE")
-        print("  [4] Claude Code CLI")
-        print("  [5] Windsurf")
-        print("  [6] Claude Desktop App")
-        print("  [7] ChatGPT Desktop App")
-        print("  [8] Cursor Agent Mode")
-        print("  [9] Other (Custom Entry)")
-        
-        choices_input = input("Enter choices as comma-separated numbers (e.g., 1, 3, 5): ").strip()
-        if not choices_input:
-            print("\033[90m → No choices selected. Skipping MCP installation.\033[0m")
-            selected_apps = []
-            break
-            
-        parts = [p.strip() for p in choices_input.split(",") if p.strip()]
-        selected_apps = []
         invalid_apps = []
+        selected_apps = []
         
-        has_other = False
-        for part in parts:
-            if part.isdigit():
-                num = int(part)
-                if num in app_mapping:
-                    selected_apps.append(app_mapping[num])
-                elif num == 9:
-                    has_other = True
-                else:
-                    invalid_apps.append(part)
-            else:
-                invalid_apps.append(part)
+        # Check if tty and termios can be imported for interactive mode
+        is_interactive = sys.stdin.isatty()
+        try:
+            import tty
+            import termios
+            import select
+        except ImportError:
+            is_interactive = False
+            
+        if is_interactive:
+            try:
+                visible_items = select_apps_interactive()
+                has_other = False
+                for item in visible_items:
+                    if item["checked"]:
+                        if item["id"] == "other":
+                            has_other = True
+                        else:
+                            selected_apps.append(item["id"])
                 
-        if has_other:
-            custom_entry = input("Enter the name of your custom application: ").strip()
-            custom_entry_lower = custom_entry.lower()
-            if custom_entry_lower in supported_targets:
-                selected_apps.append(custom_entry_lower)
+                if has_other:
+                    custom_entry = input("Enter the name of your custom application: ").strip()
+                    custom_entry_lower = custom_entry.lower()
+                    if custom_entry_lower in supported_targets:
+                        selected_apps.append(custom_entry_lower)
+                    else:
+                        invalid_apps.append(custom_entry_lower)
+            except KeyboardInterrupt:
+                print("\n\033[31mSetup cancelled by user.\033[0m")
+                sys.exit(1)
+        else:
+            # Fallback for non-TTY / tests / Windows automated setups
+            print("\nPlease select the applications/IDEs where you want to install Chronicle MCP:")
+            print("  [1] Cursor")
+            print("  [2] VS Code (Cline / Roo Code)")
+            print("  [3] Trae IDE")
+            print("  [4] Claude Code")
+            print("  [5] Windsurf")
+            print("  [6] Claude Desktop")
+            print("  [7] ChatGPT Desktop")
+            print("  [8] Antigravity")
+            print("  [9] Other (Custom Entry)")
+            
+            choices_input = input("Enter choices as comma-separated numbers (e.g., 1, 3, 5): ").strip()
+            if not choices_input:
+                print("\033[90m → No choices selected. Skipping MCP installation.\033[0m")
+                selected_apps = []
             else:
-                invalid_apps.append(custom_entry_lower)
+                parts = [p.strip() for p in choices_input.split(",") if p.strip()]
+                has_other = False
+                has_antigravity = False
                 
+                for part in parts:
+                    if part.isdigit():
+                        num = int(part)
+                        if num in app_mapping:
+                            if app_mapping[num] == "antigravity":
+                                has_antigravity = True
+                            else:
+                                selected_apps.append(app_mapping[num])
+                        elif num == 9:
+                            has_other = True
+                        else:
+                            invalid_apps.append(part)
+                    else:
+                        invalid_apps.append(part)
+                        
+                if has_antigravity:
+                    selected_apps.append("antigravity")
+                    sub_choices = input("Select Antigravity options: [1] Antigravity IDE, [2] Antigravity 2.0, [3] Antigravity CLI (comma-separated): ").strip()
+                    if sub_choices:
+                        sub_parts = [p.strip() for p in sub_choices.split(",") if p.strip()]
+                        sub_mapping = {
+                            1: "antigravity-ide",
+                            2: "antigravity-2.0",
+                            3: "antigravity-cli"
+                        }
+                        for sp in sub_parts:
+                            if sp.isdigit():
+                                s_num = int(sp)
+                                if s_num in sub_mapping:
+                                    selected_apps.append(sub_mapping[s_num])
+                                else:
+                                    invalid_apps.append(f"antigravity-sub-{sp}")
+                            else:
+                                invalid_apps.append(sp)
+                                
+                if has_other:
+                    custom_entry = input("Enter the name of your custom application: ").strip()
+                    custom_entry_lower = custom_entry.lower()
+                    if custom_entry_lower in supported_targets:
+                        selected_apps.append(custom_entry_lower)
+                    else:
+                        invalid_apps.append(custom_entry_lower)
+                        
         selected_apps = list(dict.fromkeys(selected_apps))
         
         if invalid_apps:
@@ -311,7 +494,10 @@ def run_setup_wizard():
         "windsurf": "Windsurf",
         "claude-desktop": "Claude Desktop",
         "chatgpt-desktop": "ChatGPT Desktop",
-        "cursor-agent": "Cursor Agent Mode"
+        "antigravity": "Antigravity",
+        "antigravity-ide": "Antigravity IDE",
+        "antigravity-2.0": "Antigravity 2.0",
+        "antigravity-cli": "Antigravity CLI"
     }
 
     installed_apps = []
