@@ -25,7 +25,7 @@
   <a href="#automatic-session-saving-in-cursor-and-vs-code">Auto-Save</a> ·
   <a href="#running-verification-and-tests">Tests</a> ·
   <a href="#market-comparison-matrix">Comparison</a> ·
-  <a href="#public-roadmap">Roadmap</a> ·
+  <a href="#frequently-asked-questions-faq">FAQ</a> ·
   <a href="#license">License</a>
 </p>
 
@@ -62,6 +62,46 @@ Chronicle features an interactive, zero-dependency TTY setup wizard. Running `ch
 
 > [!TIP]
 > The setup wizard is styled with a premium purple theme, supporting arrow-key navigation, spacebar toggles, inline input editing, and real-time path validation!
+
+<u><h4>Keyboard Navigation & Controls</h4></u>
+
+Use the following controls when interacting with the select menu:
+
+| Command / Action | Key Control | Description |
+| :--- | :--- | :--- |
+| **Move Highlight** | `▲` Up / `▼` Down Arrow Keys | Navigates the interactive list focus |
+| **Toggle Checkbox** | `Spacebar` | Selects or deselects the highlighted app |
+| **Enter Custom IDE** | Navigate to *Other* & type | Type custom app directory directly inline |
+| **Erase Character** | `Backspace` | Removes characters inside the custom entry |
+| **Confirm & Inject** | `Enter` | Validates target existence and runs config injection |
+| **Cancel Setup** | `Ctrl + C` or `Escape` | Aborts setup process cleanly |
+
+<u><h4>Wizard Phases & Actions</h4></u>
+
+The wizard guides you through the following phases:
+
+| Step | Phase Name | What You Do | Result & Behavior |
+| :--- | :--- | :--- | :--- |
+| **Step 1** | Monolithic Split Engine | Input JSON file path (or press `Enter` to skip) | Automatically partitions unified chat history exports |
+| **Step 2** | Storage Directory Configuration | Specify directory path (or press `Enter` for default) | Creates local storage folder for transcripts |
+| **Step 3** | Interactive IDE Selection | Toggle checkboxes, navigate submenus, type custom targets | Performs TTY selection and checks path validation |
+| **Step 4** | Config Injection & Live Dashboard | Review final summary configuration | Injects server configs into target IDE settings |
+
+---
+
+> [!IMPORTANT]
+> **HOW TO USE THE WIZARD — A STEP-BY-STEP SHOWCASE GUIDE**
+>
+> 1. **Start the Process**: Launch the wizard with `chronicle setup` in your terminal.
+> 2. **Split Monolithic Files**: Paste the path to your exported `conversations.json` (from ChatGPT or Claude). This splits them into clean individual threads inside your chats folder.
+> 3. **Define Your Chats Directory**: Keep the default `~/universal-chats` folder or type a custom path.
+> 4. **Select Your Target IDEs**:
+>    * Press `Down Arrow` to scroll down to VS Code, Trae, etc.
+>    * Press `Space` to toggle selections.
+>    * If you select Antigravity, checking it will automatically expand sub-choices (Antigravity IDE, Antigravity 2.0, Antigravity CLI) right underneath!
+>    * Scroll down to **Other (Enter custom entry)** and type any system-specific folder name to add emerging editors.
+>    * **Real-time Path Validation**: If the custom configuration path parent doesn't exist, a warning alerts you at the bottom: `⚠ App/IDE "<name>" was not found on your system.`. Erase it with `Backspace` or type a valid path to proceed.
+> 5. **Complete and Launch**: Press `Enter` to write the JSON configuration file for all selected apps. The Live Environment Dashboard will display a complete summary of your workspace configs.
 
 <details>
 <summary><b>Click to expand step-by-step Setup Walkthrough</b></summary>
@@ -402,6 +442,36 @@ Planned future features and enhancements for Chronicle:
 * **Database Auditing**: Automatic cache cleanups and data integrity audits for historical logs.
 * **Dynamic Tailoring**: Specific prompt formats optimized for different LLM host architectures (Claude, GPT, Gemini).
 * **Extended IDE Support**: Out-of-the-box config injection scripts for additional emerging developer environments.
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+<u><h3>General & Setup Inquiries</h3></u>
+
+---
+
+> **Q: What is the benefit of the new Interactive Setup Wizard?**
+>
+> **A:** It completely automates the configuration process. In less than 10 seconds, it configures your storage directory, partitions raw monolithic conversation logs, checks system environments, validates custom paths, and injects configurations into all target applications.
+
+---
+
+> **Q: Why does the setup wizard use a purple theme?**
+>
+> **A:** Chronicle is designed to feel premium and state of the art. The setup wizard uses a vibrant, highly readable purple/magenta theme (`\033[1;35m`) with custom cursor pointers (`❯`) and status checks (`[✓]`) for an optimized terminal experience.
+
+---
+
+> **Q: What happens if a custom app directory is not found on my system?**
+>
+> **A:** The interactive selector prevents invalid configurations. If you type a custom name under "Other" whose configuration directory cannot be resolved, an alert appears inline at the bottom: `⚠ App/IDE "<name>" was not found on your system.`. You can easily backspace and edit the input without losing other selections.
+
+---
+
+> **Q: How does the Automatic Session Saving work?**
+>
+> **A:** Chronicle generates workspace rule files (e.g. `.cursorrules`, `.clinerules`) instructing your AI agent to register the session at startup. On tab or editor shutdown, the server's process exit hooks trigger an automatic flush to write the transcripts to your storage folder.
 
 ---
 
