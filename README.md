@@ -253,44 +253,67 @@ chronicle setup
    pip install -e .
    ```
 
-### Quick Editor Integration
-You can automatically add Chronicle-MCP to your preferred IDE configuration using the `add` subcommand. This utility resolves the absolute path of `uvx` dynamically to guarantee error-free connections:
+### Interactive Setup Wizard Walkthrough
 
-* **Cursor**:
-  ```bash
-  chronicle add cursor
-  ```
-* **Claude Code**:
-  ```bash
-  chronicle add claude
-  ```
-* **VS Code (Cline / RooCode)**:
-  ```bash
-  chronicle add vscode
-  ```
-* **Trae**:
-  ```bash
-  chronicle add trae
-  ```
-* **Custom / Emerging IDEs**:
-  ```bash
-  chronicle add <editor-name>
-  ```
+The setup wizard handles the entire configuration automatically, step-by-step. Below is a complete visual walkthrough of the TTY setup wizard flow:
 
-Alternatively, you can configure the editor manually to execute the following startup command:
-```json
-{
-  "mcpServers": {
-    "chronicle-mcp": {
-      "command": "/absolute/path/to/uvx",
-      "args": [
-        "--from",
-        "chronicle-mcp-server",
-        "chronicle"
-      ]
-    }
-  }
-}
+#### Step 1: Launch the Setup Wizard
+Run the setup command:
+```bash
+chronicle setup
+```
+
+#### Step 2: The Monolithic Split Engine
+The wizard asks if you want to partition any monolithic chat logs (such as the single `conversations.json` from ChatGPT/Claude exports) into separate files in your new storage folder:
+```text
+── Chronicle Archive Setup ─────────────────────────────────────
+Do you want to split a single conversations.json file?
+Enter path to export file (or press ENTER to skip): 
+```
+
+#### Step 3: Configure Storage Path
+Define the folder path where Chronicle will clean and store all conversation history:
+```text
+Enter path to folder containing your conversations [Default: ~/universal-chats]: 
+✓ Using existing storage directory: /Users/username/universal-chats
+Successfully set chats directory to: /Users/username/universal-chats
+```
+
+#### Step 4: Interactive IDE Selector
+An interactive selection menu with a premium purple theme. Navigate with the arrow keys, toggle checkboxes with the `Spacebar`, edit custom inputs inline, and press `Enter` to confirm:
+```text
+Please select the applications/IDEs where you want to install Chronicle MCP:
+  (Use arrow keys to navigate, Space to toggle, Enter to confirm)
+    [✓] Cursor
+    [ ] VS Code (Cline / Roo Code)
+    [ ] Trae IDE
+    [ ] Claude Code
+    [ ] Windsurf
+    [ ] Claude Desktop
+    [ ] ChatGPT Desktop
+❯   [✓] Antigravity
+        [✓] Antigravity IDE
+        [ ] Antigravity 2.0
+        [ ] Antigravity CLI
+    Other (Enter custom entry): 
+```
+
+> [!NOTE]
+> If you enter a custom app/IDE name under "Other" that does not exist on your system, the wizard's built-in path validation checker will instantly display a warning at the bottom:
+> `⚠ App/IDE "mycustomide" was not found on your system.`
+
+#### Step 5: Inject Configs & Live Environment Dashboard
+Once selections are confirmed, Chronicle automatically resolves `uvx` paths on your system, writes the MCP server configuration into each selected app, and presents a live environment dashboard summary:
+```text
+── Chronicle Environment Live ──────────────────────────────────
+ ✓ Storage Folder : /Users/username/universal-chats
+ ✓ Auto-Saved Configs for: [Cursor, Antigravity IDE]
+
+  How to run the server manually:
+  $ uvx --from chronicle-mcp-server chronicle
+
+  recalled in <1ms · 100% local · zero cloud
+────────────────────────────────────────────────────────────────
 ```
 
 ---
