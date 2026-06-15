@@ -199,15 +199,20 @@ def getch():
     import tty
     import termios
     import select
+    import os
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = sys.stdin.read(1)
-        if ch == '\x1b':
-            r, _, _ = select.select([sys.stdin], [], [], 0.05)
+        ch_bytes = os.read(fd, 1)
+        if not ch_bytes:
+            return ""
+        ch = ch_bytes.decode("utf-8", errors="ignore")
+        if ch == "\x1b":
+            r, _, _ = select.select([fd], [], [], 0.05)
             if r:
-                ch += sys.stdin.read(2)
+                extra_bytes = os.read(fd, 2)
+                ch += extra_bytes.decode("utf-8", errors="ignore")
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return ch
