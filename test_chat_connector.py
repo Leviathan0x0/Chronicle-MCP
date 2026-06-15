@@ -477,7 +477,7 @@ class ChatConnectorTests(unittest.TestCase):
         stdout, stderr = process.communicate(input=inputs, timeout=5)
         
         self.assertEqual(process.returncode, 0)
-        self.assertIn('App/IDE "myinvalidide" is not currently supported by auto-install.', stdout)
+        self.assertIn('App/IDE "myinvalidide" was not found on your system.', stdout)
         self.assertIn("Would you like to proceed with installing", stdout)
         self.assertIn("Cursor", stdout)
 
@@ -547,7 +547,7 @@ class ChatConnectorTests(unittest.TestCase):
             self.assertNotIn("antigravity-cli", checked_ids)
 
     def test_cli_setup_wizard_interactive_custom_input(self):
-        from unittest.mock import patch
+        from unittest.mock import patch, MagicMock
         import cli
         
         # Navigate down to other (8 times Down), type "myide", press Backspace, type "es", Enter
@@ -559,8 +559,12 @@ class ChatConnectorTests(unittest.TestCase):
             '\n' # Enter
         ]
         
+        mock_path = MagicMock()
+        mock_path.parent.exists.return_value = True
+        
         with patch('cli.getch', side_effect=mock_keys), \
              patch('sys.stdin.isatty', return_value=True), \
+             patch('cli.get_config_path', return_value=mock_path), \
              patch('sys.stdout.write'):
             
             result, custom_input = cli.select_apps_interactive()

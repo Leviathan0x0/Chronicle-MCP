@@ -7,6 +7,12 @@ from pathlib import Path
 
 SETTINGS_FILE_PATH = Path.home() / ".chronicle_settings.json"
 
+SUPPORTED_TARGETS = [
+    "cursor", "vscode", "trae", "claude", "windsurf", 
+    "claude-desktop", "chatgpt-desktop", "antigravity",
+    "antigravity-ide", "antigravity-2.0", "antigravity-cli"
+]
+
 # Load saved chats folder settings and set CHRONICLE_BASE_DIR before other imports
 if SETTINGS_FILE_PATH.exists():
     try:
@@ -104,7 +110,7 @@ def get_config_path(app_name):
         return home / f".config/{app}" / "mcp.json"
 
 def split_export_file(export_file_path, output_dir_path):
-    """Parses a monolithic chat export JSON and splits it into individual neat files."""
+    """Parses the single chat export JSON and splits it into individual neat files."""
     export_path = Path(export_file_path).expanduser().resolve()
     out_dir = Path(output_dir_path).expanduser().resolve()
     
@@ -217,9 +223,12 @@ def getch():
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     return ch
 
-def select_apps_interactive():
+def select_apps_interactive(error_msgs=None):
     import sys
     
+    if error_msgs is None:
+        error_msgs = []
+
     options = [
         {"id": "cursor", "title": "Cursor", "checked": False},
         {"id": "vscode", "title": "VS Code (Cline / Roo Code)", "checked": False},
@@ -272,7 +281,7 @@ def select_apps_interactive():
             for idx, item in enumerate(visible_items):
                 is_focused = (idx == cursor_idx)
                 indent = "    " if item.get("indent") else "  "
-                pointer = "\033[1;36m❯\033[0m " if is_focused else "  "
+                pointer = "\033[1;35m❯\033[0m " if is_focused else "  "
                 
                 if item["id"] == "other":
                     # Render other app name input inline (no checkbox, aligned with checkbox start)
@@ -291,6 +300,11 @@ def select_apps_interactive():
                         text = f"\033[37m{item['title']}\033[0m"
                         
                     lines.append(f"{pointer}{indent}{checked_str} {text}")
+                    
+            if error_msgs:
+                lines.append("")
+                for msg in error_msgs:
+                    lines.append(f"\033[33m ⚠ {msg}\033[0m")
                 
             sys.stdout.write("\n".join(lines) + "\n")
             sys.stdout.flush()
@@ -311,8 +325,19 @@ def select_apps_interactive():
                     if item["id"] == "antigravity" and not item["checked"]:
                         for sub in sub_options:
                             sub["checked"] = False
+                error_msgs = []
             elif key == '\r' or key == '\n':  # Enter
-                break
+                custom_input_stripped = custom_input.strip()
+                if custom_input_stripped:
+                    custom_entry_lower = custom_input_stripped.lower()
+                    if custom_entry_lower in SUPPORTED_TARGETS:
+                        break
+                    elif get_config_path(custom_input_stripped).parent.exists():
+                        break
+                    else:
+                        error_msgs = [f'App/IDE "{custom_input_stripped}" was not found on your system.']
+                else:
+                    break
             elif key == '\x03' or key == '\x1b':  # Ctrl+C or Escape
                 raise KeyboardInterrupt
             elif len(key) == 1 and 32 <= ord(key) <= 126:
@@ -320,11 +345,13 @@ def select_apps_interactive():
                 item = visible_items[cursor_idx]
                 if item["id"] == "other":
                     custom_input += key
+                    error_msgs = []
             elif key == '\x7f' or key == '\x08':
                 # Backspace
                 item = visible_items[cursor_idx]
                 if item["id"] == "other":
                     custom_input = custom_input[:-1]
+                    error_msgs = []
     finally:
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
@@ -333,8 +360,9 @@ def select_apps_interactive():
 
 def run_setup_wizard():
     # Phase 1: The Temporal Split
-    print("\033[1;36m── Chronicle Archive Setup ─────────────────────────────────────\033[0m")
-    print("Do you want to split a monolithic conversations.json file?")
+    print()
+    print("\033[1;35m── Chronicle Archive Setup ─────────────────────────────────────\033[0m")
+    print("Do you want to split a single conversations.json file?")
     export_path_str = input("Enter path to export file (or press ENTER to skip): ").strip()
     
     split_file_path = None
@@ -372,12 +400,6 @@ def run_setup_wizard():
         print("\033[32m ✓ Successfully split logs.\033[0m")
 
     # Phase 3: MCQ
-    supported_targets = [
-        "cursor", "vscode", "trae", "claude", "windsurf", 
-        "claude-desktop", "chatgpt-desktop", "antigravity",
-        "antigravity-ide", "antigravity-2.0", "antigravity-cli"
-    ]
-    
     app_mapping = {
         1: "cursor",
         2: "vscode",
@@ -413,16 +435,18 @@ def run_setup_wizard():
                 custom_input_stripped = custom_input.strip()
                 if custom_input_stripped:
                     custom_entry_lower = custom_input_stripped.lower()
-                    if custom_entry_lower in supported_targets:
+                    if custom_entry_lower in SUPPORTED_TARGETS:
+                        selected_apps.append(custom_entry_lower)
+                    elif get_config_path(custom_input_stripped).parent.exists():
                         selected_apps.append(custom_entry_lower)
                     else:
-                        invalid_apps.append(custom_entry_lower)
+                        invalid_apps.append((custom_input_stripped, "not_found"))
             except KeyboardInterrupt:
                 print("\n\033[31mSetup cancelled by user.\033[0m")
                 sys.exit(1)
         else:
             # Fallback for non-TTY / tests / Windows automated setups
-            print("\nPlease select the applications/IDEs where you want to install Chronicle MCP:")
+            print("\n\033[1;35mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
             print("  [1] Cursor")
             print("  [2] VS Code (Cline / Roo Code)")
             print("  [3] Trae IDE")
@@ -453,9 +477,9 @@ def run_setup_wizard():
                         elif num == 9:
                             has_other = True
                         else:
-                            invalid_apps.append(part)
+                            invalid_apps.append((part, "not_supported"))
                     else:
-                        invalid_apps.append(part)
+                        invalid_apps.append((part, "not_supported"))
                         
                 if has_antigravity:
                     selected_apps.append("antigravity")
@@ -473,23 +497,30 @@ def run_setup_wizard():
                                 if s_num in sub_mapping:
                                     selected_apps.append(sub_mapping[s_num])
                                 else:
-                                    invalid_apps.append(f"antigravity-sub-{sp}")
+                                    invalid_apps.append((f"antigravity-sub-{sp}", "not_supported"))
                             else:
-                                invalid_apps.append(sp)
+                                invalid_apps.append((sp, "not_supported"))
                                 
                 if has_other:
                     custom_entry = input("Enter the name of your custom application: ").strip()
                     custom_entry_lower = custom_entry.lower()
-                    if custom_entry_lower in supported_targets:
+                    if custom_entry_lower in SUPPORTED_TARGETS:
                         selected_apps.append(custom_entry_lower)
                     else:
-                        invalid_apps.append(custom_entry_lower)
-                        
+                        # Check if config path parent exists
+                        if get_config_path(custom_entry).parent.exists():
+                            selected_apps.append(custom_entry_lower)
+                        else:
+                            invalid_apps.append((custom_entry_lower, "not_found"))
+                            
         selected_apps = list(dict.fromkeys(selected_apps))
         
         if invalid_apps:
-            for inv in invalid_apps:
-                print(f'\033[33m ⚠ App/IDE "{inv}" is not currently supported by auto-install.\033[0m')
+            for inv, err_type in invalid_apps:
+                if err_type == "not_found":
+                    print(f'\033[33m ⚠ App/IDE "{inv}" was not found on your system.\033[0m')
+                else:
+                    print(f'\033[33m ⚠ App/IDE "{inv}" is not currently supported by auto-install.\033[0m')
             
             if selected_apps:
                 valid_apps_str = ", ".join(selected_apps)
@@ -525,7 +556,7 @@ def run_setup_wizard():
         update_json_config(app)
         installed_apps.append(app_titles.get(app, app.title().replace("-", " ")))
         
-    print("\n\033[1;36m── Chronicle Environment Live ──────────────────────────────────\033[0m")
+    print("\n\033[1;35m── Chronicle Environment Live ──────────────────────────────────\033[0m")
     print(f" \033[32m✓\033[0m Storage Folder : {resolved_storage_path}")
     if installed_apps:
         print(f" \033[32m✓\033[0m Auto-Saved Configs for: [{', '.join(installed_apps)}]")
@@ -534,7 +565,7 @@ def run_setup_wizard():
     print("\n  How to run the server manually:")
     print("  $ uvx --from chronicle-mcp-server chronicle")
     print("\n  recalled in <1ms · 100% local · zero cloud")
-    print("\033[1;36m────────────────────────────────────────────────────────────────\033[0m")
+    print("\033[1;35m────────────────────────────────────────────────────────────────\033[0m")
 
 def main():
     # Route to the setup wizard if len(sys.argv) == 1 and sys.stdin.isatty(), or if sys.argv[1] == "setup"
