@@ -29,7 +29,7 @@ class ChatConnectorTests(unittest.TestCase):
         files = self.cc.get_chat_logs(client="default")
         self.assertIn("alpha.json", files)
         hits = self.cc.search_history(query="roblox", method="keyword")
-        self.assertEqual(hits[0], "alpha.json")
+        self.assertEqual(hits[0], "alpha__part_1.json")
 
     def test_read_range_and_save(self):
         msgs = [{"role": "user", "content": f"msg {i}"} for i in range(5)]
@@ -76,7 +76,7 @@ class ChatConnectorTests(unittest.TestCase):
         self._write_chat("ui_page.json", [{"role": "user", "content": "design hero section navbar"}])
         semantic = self.cc.search_history(query="mcp server stdio connector", method="semantic", top_k=2)
         self.assertGreater(semantic[0]["score"], 0)
-        self.assertEqual(semantic[0]["file"], "mcp_setup.json")
+        self.assertEqual(semantic[0]["file"], "mcp_setup__part_1.json")
 
         summary = self.cc.get_chat_logs(chat_id="mcp_setup.json", view_type="summary")
         self.assertIn("configure mcp", summary)
@@ -241,8 +241,8 @@ class ChatConnectorTests(unittest.TestCase):
         results = self.cc.search_chats_semantic(query="unique keyword search testing", top_k=2)
         self.assertEqual(len(results), 2)
         # The first result (highest score) must be decay_beta.json (newer)
-        self.assertEqual(results[0]["file"], "decay_beta.json")
-        self.assertEqual(results[1]["file"], "decay_alpha.json")
+        self.assertEqual(results[0]["file"], "decay_beta__part_1.json")
+        self.assertEqual(results[1]["file"], "decay_alpha__part_1.json")
         self.assertGreater(results[0]["score"], results[1]["score"])
 
     def test_heuristic_summary_pruning(self):
@@ -290,12 +290,138 @@ class ChatConnectorTests(unittest.TestCase):
         
         # Verify searching by keyword uses the index and finds it
         hits = self.cc.search_history(query="verification", method="keyword")
-        self.assertIn("index_alpha.json", hits)
+        self.assertIn("index_alpha__part_1.json", hits)
         
         # Delete the file and check that the index is updated
-        self.cc.manage_session_state(action="delete", file_name="index_alpha.json", confirm=True)
+        self.cc.manage_session_state(action="delete", file_name="index_alpha__part_1.json", confirm=True)
         hits2 = self.cc.search_history(query="verification", method="keyword")
-        self.assertNotIn("index_alpha.json", hits2)
+        self.assertNotIn("index_alpha__part_1.json", hits2)
+
+    def test_okapi_bm25_relevance_ranking(self):
+        # Doc 1: Very short document
+        self._write_chat("short_doc.json", [
+            {"role": "user", "content": "specialquery"}
+        ])
+        # Doc 2: Very long document repeating other words but containing 'specialquery' once
+        long_content = "otherword " * 100 + "specialquery" + " otherword" * 100
+        self._write_chat("long_doc.json", [
+            {"role": "user", "content": long_content}
+        ])
+        
+        # Sync index
+        self.cc._sync_serialized_index("default")
+        
+        # Search semantically using our BM25 scorer
+        results = self.cc.search_chats_semantic(query="specialquery", top_k=2)
+        self.assertEqual(len(results), 2)
+        
+        # The first result (highest score) must be the short document part
+        self.assertIn("short_doc", results[0]["file"])
+        self.assertIn("long_doc", results[1]["file"])
+        self.assertGreater(results[0]["score"], results[1]["score"])
+
+        # Check keyword search too
+        hits = self.cc.search_history(query="specialquery", method="keyword")
+        self.assertEqual(len(hits), 2)
+        self.assertIn("short_doc", hits[0])
+        self.assertIn("long_doc", hits[1])
+
+    def test_temporal_session_splitting(self):
+        import time
+        now = time.time()
+        # Create a conversation with 3 messages:
+        # Msg 1 at t
+        # Msg 2 at t + 600 (10 mins later)
+        # Msg 3 at t + 3000 (50 mins later -> gap of 40 mins, triggers temporal split)
+        messages = [
+            {"role": "user", "content": "message one", "timestamp": now},
+            {"role": "assistant", "content": "message two", "timestamp": now + 600},
+            {"role": "user", "content": "message three", "timestamp": now + 3000}
+        ]
+        self._write_chat("temporal_split.json", messages)
+        
+        # Trigger index update
+        self.cc._update_file_index("temporal_split.json", "default")
+        
+        # Look at the serialized index to see the logical parts
+        index_data = self.cc._load_serialized_index()
+        doc_lengths = index_data.get("doc_lengths", {})
+        
+        # We expect two logical parts for temporal_split.json:
+        # temporal_split__part_1.json (containing message one and two)
+        # temporal_split__part_2.json (containing message three)
+        part_1_key = "default/temporal_split__part_1.json"
+        part_2_key = "default/temporal_split__part_2.json"
+        
+        self.assertIn(part_1_key, doc_lengths)
+        self.assertIn(part_2_key, doc_lengths)
+        
+        # Check range reading of individual parts
+        part_1_text = self.cc.read_chat_message_range("temporal_split__part_1.json")
+        self.assertIn("message one", part_1_text)
+        self.assertIn("message two", part_1_text)
+        self.assertNotIn("message three", part_1_text)
+        
+        part_2_text = self.cc.read_chat_message_range("temporal_split__part_2.json")
+        self.assertNotIn("message one", part_2_text)
+        self.assertNotIn("message two", part_2_text)
+        self.assertIn("message three", part_2_text)
+
+    def test_turn_based_session_splitting(self):
+        # 35 messages, no timestamp gaps
+        messages = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"turnmsg_{i}"} for i in range(35)]
+        self._write_chat("turn_split.json", messages)
+        
+        # Trigger index update
+        self.cc._update_file_index("turn_split.json", "default")
+        
+        index_data = self.cc._load_serialized_index()
+        doc_lengths = index_data.get("doc_lengths", {})
+        
+        part_1_key = "default/turn_split__part_1.json"
+        part_2_key = "default/turn_split__part_2.json"
+        part_3_key = "default/turn_split__part_3.json"
+        
+        self.assertIn(part_1_key, doc_lengths)
+        self.assertIn(part_2_key, doc_lengths)
+        self.assertNotIn(part_3_key, doc_lengths) # Only 2 parts expected (0-19 and 16-34)
+        
+        # Verify message contents for part 1 and part 2 (checking the 4-message overlap: 16, 17, 18, 19)
+        part_1_text = self.cc.read_chat_message_range("turn_split__part_1.json", start_msg=1, end_msg=30)
+        self.assertIn("turnmsg_0", part_1_text)
+        self.assertIn("turnmsg_19", part_1_text)
+        self.assertNotIn("turnmsg_20", part_1_text)
+        
+        part_2_text = self.cc.read_chat_message_range("turn_split__part_2.json", start_msg=1, end_msg=30)
+        self.assertNotIn("turnmsg_15", part_2_text)
+        self.assertIn("turnmsg_16", part_2_text)
+        self.assertIn("turnmsg_34", part_2_text)
+
+    def test_logical_part_file_operations(self):
+        messages = [{"role": "user", "content": "hello there action item: fix code"}]
+        self._write_chat("ops_file.json", messages)
+        self.cc._update_file_index("ops_file.json", "default")
+        
+        # Resolve metadata on part 1
+        meta = self.cc.get_chat_logs(chat_id="ops_file__part_1.json", view_type="metadata")
+        self.assertEqual(meta["message_count"], 1)
+        self.assertEqual(meta["file_name"], "ops_file.json")
+        
+        # Resolve summary on part 1
+        summary = self.cc.get_chat_logs(chat_id="ops_file__part_1.json", view_type="summary")
+        self.assertIn("hello there", summary)
+        
+        # Resolve action items on part 1 using compile_project_insights
+        items = self.cc.compile_project_insights(insight_type="action_items", file_name="ops_file__part_1.json")
+        self.assertTrue(any("fix code" in i for i in items))
+        
+        # Delete using part 1
+        del_result = self.cc.manage_session_state(action="delete", file_name="ops_file__part_1.json", confirm=True)
+        self.assertIn("Deleted", del_result)
+        
+        # Verify physical file is gone
+        path = os.path.join(self.cc.resolve_chats_dir("default"), "ops_file.json")
+        self.assertFalse(os.path.exists(path))
 
 
 if __name__ == "__main__":

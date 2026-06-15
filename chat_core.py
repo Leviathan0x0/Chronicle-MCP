@@ -309,6 +309,206 @@ def apply_temporal_decay(raw_score: float, doc_timestamp: float, half_life_days:
     return raw_score * decay_multiplier
 
 
+def calculate_bm25_score(
+    query_terms: list[str],
+    doc_id: str,
+    term_frequencies: dict[str, dict[str, int]],  # {"term": {"doc_id": count}}
+    doc_lengths: dict[str, int],                  # {"doc_id": length}
+    n_docs: int,
+    k1: float = 1.5,
+    b: float = 0.75
+) -> float:
+    """Computes the Okapi BM25 score for a document against a set of query terms."""
+    if n_docs == 0:
+        return 0.0
+        
+    avgdl = sum(doc_lengths.values()) / n_docs
+    score = 0.0
+    doc_len = doc_lengths.get(doc_id, 0)
+    
+    if doc_len == 0:
+        return 0.0
+
+    for term in query_terms:
+        if term not in term_frequencies:
+            continue
+            
+        n_q = len(term_frequencies[term])
+        if n_q == 0:
+            continue
+            
+        f_q = term_frequencies[term].get(doc_id, 0)
+        if f_q == 0:
+            continue
+            
+        idf = math.log(((n_docs - n_q + 0.5) / (n_q + 0.5)) + 1.0)
+        
+        numerator = f_q * (k1 + 1.0)
+        denominator = f_q + k1 * (1.0 - b + b * (doc_len / avgdl))
+        
+        score += idf * (numerator / denominator)
+        
+    return score
+
+
+def _parse_timestamp(val: Any) -> float | None:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            val_clean = val.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(val_clean)
+            return dt.timestamp()
+        except Exception:
+            pass
+    return None
+
+
+def parse_to_messages_with_timestamps(chat_data: dict | list) -> list[dict]:
+    """Parse chat data into standard list of messages with timestamps if available."""
+    messages: list[dict] = []
+
+    if isinstance(chat_data, dict) and "mapping" in chat_data:
+        nodes = []
+        for _node_id, node in chat_data.get("mapping", {}).items():
+            message = node.get("message")
+            if message and message.get("author") and message.get("content"):
+                role = message["author"]["role"]
+                if role in ["user", "assistant", "system", "model"]:
+                    parts = message["content"].get("parts", [""])
+                    text = " ".join(p for p in parts if isinstance(p, str))
+                    if text.strip():
+                        prefix = _role_prefix(role)
+                        ts = _parse_timestamp(message.get("create_time"))
+                        nodes.append({
+                            "text": f"{prefix}{text.strip()}",
+                            "timestamp": ts,
+                        })
+        nodes.sort(key=lambda x: x["timestamp"] or 0.0)
+        return nodes
+        
+    elif isinstance(chat_data, dict) and "chat_messages" in chat_data:
+        for msg in chat_data.get("chat_messages", []):
+            if not isinstance(msg, dict):
+                continue
+            sender = msg.get("sender", "human")
+            role = "user" if str(sender).lower() in ["human", "user"] else "assistant"
+            text = msg.get("text", "")
+            if not text.strip() and isinstance(msg.get("content"), list):
+                text = " ".join(
+                    part.get("text", "")
+                    for part in msg["content"]
+                    if isinstance(part, dict) and part.get("type") == "text"
+                )
+            if text.strip():
+                prefix = _role_prefix(role)
+                ts_val = msg.get("timestamp") or msg.get("created_at") or msg.get("create_time")
+                ts = _parse_timestamp(ts_val)
+                messages.append({
+                    "text": f"{prefix}{text.strip()}",
+                    "timestamp": ts,
+                })
+                
+    elif (isinstance(chat_data, dict) and "messages" in chat_data) or isinstance(chat_data, list):
+        raw_msgs = chat_data.get("messages", chat_data) if isinstance(chat_data, dict) else chat_data
+        for msg in raw_msgs:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role") or msg.get("author", {}).get("role") or msg.get("sender") or "user"
+            role_str = str(role).lower()
+            if role_str in ["human", "user", "u"]:
+                role = "user"
+            elif role_str in ["assistant", "model", "ai", "a"]:
+                role = "assistant"
+            content = msg.get("content") or msg.get("text") or ""
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        text_parts.append(part.get("text", ""))
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                text = " ".join(text_parts)
+            else:
+                text = str(content)
+            if text.strip():
+                prefix = _role_prefix(str(role))
+                ts_val = msg.get("timestamp") or msg.get("created_at") or msg.get("create_time")
+                ts = _parse_timestamp(ts_val)
+                messages.append({
+                    "text": f"{prefix}{text.strip()}",
+                    "timestamp": ts,
+                })
+
+    return messages
+
+
+def _chunk_conversation(messages: list[dict]) -> list[list[dict]]:
+    if not messages:
+        return []
+        
+    segments = []
+    current_segment = [messages[0]]
+    
+    for i in range(1, len(messages)):
+        msg_prev = messages[i-1]
+        msg_curr = messages[i]
+        
+        ts_prev = msg_prev.get("timestamp")
+        ts_curr = msg_curr.get("timestamp")
+        
+        split_temporal = False
+        if ts_prev is not None and ts_curr is not None:
+            if ts_curr - ts_prev > 1800:
+                split_temporal = True
+                
+        if split_temporal:
+            segments.append(current_segment)
+            current_segment = [msg_curr]
+        else:
+            current_segment.append(msg_curr)
+            
+    segments.append(current_segment)
+    
+    final_chunks = []
+    for segment in segments:
+        if len(segment) > 30:
+            idx = 0
+            while idx < len(segment):
+                chunk = segment[idx:idx+20]
+                final_chunks.append(chunk)
+                if idx + 20 >= len(segment):
+                    break
+                idx += 16
+        else:
+            final_chunks.append(segment)
+            
+    return final_chunks
+
+
+def _part_file_name(file_name: str, p: int) -> str:
+    if file_name.endswith(".json.gz"):
+        base = file_name[:-8]
+        return f"{base}__part_{p}.json.gz"
+    elif file_name.endswith(".json"):
+        base = file_name[:-5]
+        return f"{base}__part_{p}.json"
+    return f"{file_name}__part_{p}.json"
+
+
+def _parse_part_file_name(file_name: str) -> tuple[str, int] | None:
+    match = re.match(r"^(.*)__part_(\d+)(?:\.json(\.gz)?)?$", file_name)
+    if not match:
+        return None
+    base = match.group(1)
+    part_num = int(match.group(2))
+    is_gz = match.group(3) is not None
+    orig_file_name = f"{base}.json.gz" if is_gz else f"{base}.json"
+    return orig_file_name, part_num
+
+
 class ChatConnector:
     def __init__(self, base_dir: str | None = None, cursor_transcripts_dir: str | None = None):
         self.base_dir = base_dir or DEFAULT_BASE_DIR
@@ -469,17 +669,18 @@ class ChatConnector:
 
     def _load_serialized_index(self) -> dict:
         if not os.path.exists(self.serialized_index_path):
-            return {"timestamps": {}, "index": {}}
+            return {"timestamps": {}, "doc_lengths": {}, "index": {}}
         try:
             with open(self.serialized_index_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
-                return {"timestamps": {}, "index": {}}
+                return {"timestamps": {}, "doc_lengths": {}, "index": {}}
             data.setdefault("timestamps", {})
+            data.setdefault("doc_lengths", {})
             data.setdefault("index", {})
             return data
         except Exception:
-            return {"timestamps": {}, "index": {}}
+            return {"timestamps": {}, "doc_lengths": {}, "index": {}}
 
     def _update_file_index(self, file_name: str, client: str = "default") -> None:
         file_path = self._safe_chat_path(file_name, client)
@@ -488,48 +689,91 @@ class ChatConnector:
         try:
             mtime = os.path.getmtime(file_path)
             index_data = self._load_serialized_index()
-            doc_key = f"{client}/{file_name}"
+            doc_key_prefix = f"{client}/{file_name}"
 
-            # Read and parse
+            # Read and parse raw messages
             raw = self._read_chat_file(file_path)
-            text = " ".join(parse_to_plain_text(raw))
-            tokens = _tokenize(text)
-            counts = Counter(tokens)
+            messages = parse_to_messages_with_timestamps(raw)
+            chunks = _chunk_conversation(messages)
 
-            # Clean old index entries
+            # Clean old index entries for this file (and all its parts)
             timestamps = index_data["timestamps"]
+            doc_lengths = index_data["doc_lengths"]
             index_map = index_data["index"]
 
+            if file_name.endswith(".json.gz"):
+                base_name = file_name[:-8]
+            elif file_name.endswith(".json"):
+                base_name = file_name[:-5]
+            else:
+                base_name = file_name
+            part_prefix = f"{client}/{base_name}__part_"
+
             for keyword, docs in list(index_map.items()):
-                if doc_key in docs:
-                    del docs[doc_key]
+                for dkey in list(docs.keys()):
+                    if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                        del docs[dkey]
                 if not docs:
                     del index_map[keyword]
+            
+            for dkey in list(doc_lengths.keys()):
+                if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                    del doc_lengths[dkey]
+                    
+            for dkey in list(timestamps.keys()):
+                if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                    del timestamps[dkey]
 
-            # Insert new entries
-            for keyword, count in counts.items():
-                index_map.setdefault(keyword, {})[doc_key] = count
+            # Index new parts
+            for p, chunk in enumerate(chunks, 1):
+                part_file = _part_file_name(file_name, p)
+                part_key = f"{client}/{part_file}"
+                text = " ".join(msg["text"] for msg in chunk)
+                tokens = _tokenize(text)
+                counts = Counter(tokens)
 
-            timestamps[doc_key] = mtime
+                for keyword, count in counts.items():
+                    index_map.setdefault(keyword, {})[part_key] = count
+                
+                doc_lengths[part_key] = len(tokens)
+
+            # Map the original file name to mtime in timestamps
+            timestamps[doc_key_prefix] = mtime
             self._write_json(self.serialized_index_path, index_data)
         except Exception:
             pass
 
     def _remove_file_from_index(self, file_name: str, client: str = "default") -> None:
-        doc_key = f"{client}/{file_name}"
+        doc_key_prefix = f"{client}/{file_name}"
+        if file_name.endswith(".json.gz"):
+            base_name = file_name[:-8]
+        elif file_name.endswith(".json"):
+            base_name = file_name[:-5]
+        else:
+            base_name = file_name
+        part_prefix = f"{client}/{base_name}__part_"
+
         index_data = self._load_serialized_index()
         timestamps = index_data.get("timestamps", {})
+        doc_lengths = index_data.get("doc_lengths", {})
         index_map = index_data.get("index", {})
 
         changed = False
-        if doc_key in timestamps:
-            del timestamps[doc_key]
-            changed = True
+        for dkey in list(timestamps.keys()):
+            if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                del timestamps[dkey]
+                changed = True
+
+        for dkey in list(doc_lengths.keys()):
+            if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                del doc_lengths[dkey]
+                changed = True
 
         for keyword, docs in list(index_map.items()):
-            if doc_key in docs:
-                del docs[doc_key]
-                changed = True
+            for dkey in list(docs.keys()):
+                if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                    del docs[dkey]
+                    changed = True
             if not docs:
                 del index_map[keyword]
 
@@ -539,6 +783,7 @@ class ChatConnector:
     def _sync_serialized_index(self, client: str = "default") -> dict:
         index_data = self._load_serialized_index()
         timestamps = index_data.setdefault("timestamps", {})
+        doc_lengths = index_data.setdefault("doc_lengths", {})
         index_map = index_data.setdefault("index", {})
 
         chats_dir = self.resolve_chats_dir(client)
@@ -547,40 +792,77 @@ class ChatConnector:
         changed = False
         current_keys = set()
         for file in files:
-            doc_key = f"{client}/{file}"
-            current_keys.add(doc_key)
+            doc_key_prefix = f"{client}/{file}"
+            current_keys.add(doc_key_prefix)
             file_path = os.path.join(chats_dir, file)
             try:
                 mtime = os.path.getmtime(file_path)
-                if doc_key not in timestamps or timestamps[doc_key] < mtime:
+                if doc_key_prefix not in timestamps or timestamps[doc_key_prefix] < mtime:
                     raw = self._read_chat_file(file_path)
-                    text = " ".join(parse_to_plain_text(raw))
-                    tokens = _tokenize(text)
-                    counts = Counter(tokens)
+                    messages = parse_to_messages_with_timestamps(raw)
+                    chunks = _chunk_conversation(messages)
 
-                    # Remove old entries
+                    # Remove old entries for this file/parts
+                    if file.endswith(".json.gz"):
+                        base_name = file[:-8]
+                    elif file.endswith(".json"):
+                        base_name = file[:-5]
+                    else:
+                        base_name = file
+                    part_prefix = f"{client}/{base_name}__part_"
+
                     for kw, docs in list(index_map.items()):
-                        if doc_key in docs:
-                            del docs[doc_key]
+                        for dkey in list(docs.keys()):
+                            if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                                del docs[dkey]
                         if not docs:
                             del index_map[kw]
 
-                    # Add new entries
-                    for kw, count in counts.items():
-                        index_map.setdefault(kw, {})[doc_key] = count
+                    for dkey in list(doc_lengths.keys()):
+                        if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                            del doc_lengths[dkey]
 
-                    timestamps[doc_key] = mtime
+                    # Add new entries for parts
+                    for p, chunk in enumerate(chunks, 1):
+                        part_file = _part_file_name(file, p)
+                        part_key = f"{client}/{part_file}"
+                        text = " ".join(msg["text"] for msg in chunk)
+                        tokens = _tokenize(text)
+                        counts = Counter(tokens)
+
+                        for kw, count in counts.items():
+                            index_map.setdefault(kw, {})[part_key] = count
+                        doc_lengths[part_key] = len(tokens)
+
+                    timestamps[doc_key_prefix] = mtime
                     changed = True
             except Exception:
                 pass
 
         # Remove deleted files
-        for doc_key in list(timestamps.keys()):
-            if doc_key.startswith(f"{client}/") and doc_key not in current_keys:
-                del timestamps[doc_key]
+        for doc_key_prefix in list(timestamps.keys()):
+            if doc_key_prefix.startswith(f"{client}/") and doc_key_prefix not in current_keys:
+                del timestamps[doc_key_prefix]
+                
+                # Get the filename from doc_key_prefix
+                file_name = doc_key_prefix.split("/", 1)[1]
+                if file_name.endswith(".json.gz"):
+                    base_name = file_name[:-8]
+                elif file_name.endswith(".json"):
+                    base_name = file_name[:-5]
+                else:
+                    base_name = file_name
+                part_prefix = f"{client}/{base_name}__part_"
+
+                # Delete any parts as well
+                for dkey in list(doc_lengths.keys()):
+                    if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                        del doc_lengths[dkey]
+
                 for kw, docs in list(index_map.items()):
-                    if doc_key in docs:
-                        del docs[doc_key]
+                    for dkey in list(docs.keys()):
+                        if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                            del docs[dkey]
                     if not docs:
                         del index_map[kw]
                 changed = True
@@ -627,7 +909,11 @@ class ChatConnector:
         try:
             index_data = self._sync_serialized_index(client)
             index_map = index_data.get("index", {})
-            doc_scores = {}
+            doc_lengths = index_data.get("doc_lengths", {})
+            client_docs = [d for d in doc_lengths if d.startswith(f"{client}/")]
+            n_docs = len(client_docs)
+
+            candidate_docs = set()
             cleaned_kws = [kw.lower() for kw in keywords if kw]
             for kw in cleaned_kws:
                 tokens = _tokenize(kw)
@@ -643,18 +929,29 @@ class ChatConnector:
                 if matching_docs_for_kw:
                     for doc_key in matching_docs_for_kw:
                         if doc_key.startswith(f"{client}/"):
-                            doc_scores[doc_key] = doc_scores.get(doc_key, 0) + 1
+                            candidate_docs.add(doc_key)
 
-            matching_files = []
-            for doc_key, match_count in doc_scores.items():
-                if match_count >= 1:
-                    file_name = doc_key.split("/", 1)[1]
-                    matching_files.append((file_name, match_count))
-
-            matching_files.sort(key=lambda x: (-x[1], x[0]))
-            results = [item[0] for item in matching_files]
-            if not results:
+            if not candidate_docs:
                 return ["No matching conversations found."]
+
+            query_terms = []
+            for kw in cleaned_kws:
+                query_terms.extend(_tokenize(kw))
+
+            scored_candidates = []
+            for doc_key in candidate_docs:
+                bm25_score = calculate_bm25_score(
+                    query_terms=query_terms,
+                    doc_id=doc_key,
+                    term_frequencies=index_map,
+                    doc_lengths=doc_lengths,
+                    n_docs=n_docs
+                )
+                file_name = doc_key.split("/", 1)[1]
+                scored_candidates.append((file_name, bm25_score))
+
+            scored_candidates.sort(key=lambda x: (-x[1], x[0]))
+            results = [item[0] for item in scored_candidates]
             if len(results) > limit:
                 return results[:limit] + [
                     f"[System Note: Truncated to first {limit} matches. Specify a higher limit if needed]"
@@ -672,14 +969,31 @@ class ChatConnector:
         summarize_code: bool = True,
         client: str = "default",
     ) -> str:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, part_num = parsed
+        else:
+            orig_file_name = file_name
+            part_num = None
+
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path:
             return "Error: Security block. Access denied."
         if not os.path.exists(file_path):
             return f"File {file_name} not found."
         try:
             raw_data = self._read_chat_file(file_path)
-            plain_messages = parse_to_plain_text(raw_data)
+            if part_num is not None:
+                messages_with_ts = parse_to_messages_with_timestamps(raw_data)
+                chunks = _chunk_conversation(messages_with_ts)
+                if 1 <= part_num <= len(chunks):
+                    chunk_msgs = chunks[part_num - 1]
+                    plain_messages = [msg["text"] for msg in chunk_msgs]
+                else:
+                    return f"Error: Part {part_num} not found. Total parts: {len(chunks)}."
+            else:
+                plain_messages = parse_to_plain_text(raw_data)
+
             total_msgs = len(plain_messages)
             if total_msgs == 0:
                 return "This file contains no extractable conversation messages."
@@ -779,26 +1093,36 @@ class ChatConnector:
     def delete_stored_chat(self, file_name: str, confirm: bool = False, client: str = "default") -> str:
         if not confirm:
             return "Deletion blocked. Set confirm=true to permanently delete the chat archive."
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path:
             return "Error: Security block. Access denied."
         if not os.path.exists(file_path):
-            return f"File {file_name} not found."
+            return f"File {orig_file_name} not found."
         try:
             os.remove(file_path)
-            self._remove_file_from_index(file_name, client)
+            self._remove_file_from_index(orig_file_name, client)
             return f"Deleted {os.path.basename(file_path)}."
         except Exception as e:
             return f"Delete error: {e}"
 
     def get_chat_metadata(self, file_name: str, client: str = "default") -> dict:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path or not os.path.exists(file_path):
             return {"error": f"File {file_name} not found."}
         try:
             raw = self._read_chat_file(file_path)
             plain = parse_to_plain_text(raw)
-            title = raw.get("title", os.path.splitext(file_name)[0]) if isinstance(raw, dict) else file_name
+            title = raw.get("title", os.path.splitext(orig_file_name)[0]) if isinstance(raw, dict) else orig_file_name
             return {
                 "file_name": os.path.basename(file_path),
                 "title": title,
@@ -814,32 +1138,42 @@ class ChatConnector:
     def merge_conversation_into_archive(
         self, file_name: str, new_messages: list[dict], client: str = "default"
     ) -> str:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path:
             return "Error: Security block. Access denied."
-        existing: dict = {"title": file_name, "messages": []}
+        existing: dict = {"title": orig_file_name, "messages": []}
         if os.path.exists(file_path):
             existing = self._read_chat_file(file_path)
             if not isinstance(existing, dict):
-                existing = {"title": file_name, "messages": existing}
+                existing = {"title": orig_file_name, "messages": existing}
         merged = existing.get("messages", []) + new_messages
         existing["messages"] = merged
         existing["merged_at"] = self._now_iso()
         self._write_json(file_path, existing)
-        self._update_file_index(file_name, client)
+        self._update_file_index(orig_file_name, client)
         return f"Merged {len(new_messages)} messages into {os.path.basename(file_path)} (total: {len(merged)})."
 
     def export_chat_as_markdown(
         self, file_name: str, output_name: str | None = None, client: str = "default"
     ) -> str:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path or not os.path.exists(file_path):
             return f"File {file_name} not found."
         try:
             raw = self._read_chat_file(file_path)
-            title = raw.get("title", os.path.splitext(file_name)[0]) if isinstance(raw, dict) else file_name
+            title = raw.get("title", os.path.splitext(orig_file_name)[0]) if isinstance(raw, dict) else orig_file_name
             plain = parse_to_plain_text(raw)
-            md_name = output_name or f"{os.path.splitext(os.path.basename(file_name))[0]}.md"
+            md_name = output_name or f"{os.path.splitext(os.path.basename(orig_file_name))[0]}.md"
             md_path = os.path.join(self.exports_dir, os.path.basename(md_name))
             lines = [f"# {title}", "", f"_Exported: {self._now_iso()}_", ""]
             for msg in plain:
@@ -858,44 +1192,54 @@ class ChatConnector:
     # ── Search and retrieval ────────────────────────────────────────────────
 
     def search_chats_semantic(self, query: str, top_k: int = 10, client: str = "default") -> list[dict]:
-        files = self._list_json_files(client)
-        if not files:
-            return [{"file": "No stored chats found.", "score": 0}]
-        docs: list[str] = []
-        names: list[str] = []
-        timestamps: list[float] = []
-        chats_dir = self.resolve_chats_dir(client)
-        for file in files:
-            path = os.path.join(chats_dir, file)
-            try:
-                raw = self._read_chat_file(path)
-                text = " ".join(parse_to_plain_text(raw))
-                docs.append(text or file)
-                names.append(file)
-            except Exception:
-                docs.append(file)
-                names.append(file)
-            try:
-                mtime = os.path.getmtime(path)
-            except Exception:
-                mtime = 0.0
-            timestamps.append(mtime)
+        index_data = self._sync_serialized_index(client)
+        doc_lengths = index_data.get("doc_lengths", {})
+        index_map = index_data.get("index", {})
+        timestamps = index_data.get("timestamps", {})
 
-        vectors, _ = _tfidf_vectors(docs)
-        query_vec = _tfidf_vectors([query])[0][0]
+        client_docs = [d for d in doc_lengths if d.startswith(f"{client}/")]
+        if not client_docs:
+            return [{"file": "No stored chats found.", "score": 0.0}]
+
+        query_terms = _tokenize(query)
+        if not query_terms:
+            return []
+
+        n_docs = len(client_docs)
         scored = []
-        for name, vec, mtime in zip(names, vectors, timestamps):
-            raw_score = _cosine_similarity(query_vec, vec)
-            decayed_score = apply_temporal_decay(raw_score, mtime)
+        for doc_key in client_docs:
+            bm25_score = calculate_bm25_score(
+                query_terms=query_terms,
+                doc_id=doc_key,
+                term_frequencies=index_map,
+                doc_lengths=doc_lengths,
+                n_docs=n_docs
+            )
+
+            part_file = doc_key.split("/", 1)[1]
+            parsed = _parse_part_file_name(part_file)
+            if parsed:
+                orig_file_name, _ = parsed
+                mtime = timestamps.get(f"{client}/{orig_file_name}", 0.0)
+            else:
+                mtime = timestamps.get(doc_key, 0.0)
+
+            decayed_score = apply_temporal_decay(bm25_score, mtime)
             scored.append({
-                "file": name,
+                "file": part_file,
                 "score": round(decayed_score, 4)
             })
+
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:top_k]
 
     def get_chat_summary(self, file_name: str, client: str = "default") -> str:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path or not os.path.exists(file_path):
             return f"File {file_name} not found."
         try:
@@ -903,7 +1247,7 @@ class ChatConnector:
             plain = parse_to_plain_text(raw)
             if not plain:
                 return "No messages to summarize."
-            title = raw.get("title", file_name) if isinstance(raw, dict) else file_name
+            title = raw.get("title", orig_file_name) if isinstance(raw, dict) else orig_file_name
             if isinstance(raw, dict) and raw.get("summary"):
                 return f"**{title}** ({len(plain)} messages)\n\n{raw['summary']}"
             user_msgs = [m[3:] for m in plain if m.startswith("U: ")]
@@ -911,7 +1255,7 @@ class ChatConnector:
             opener = user_msgs[0][:300] if user_msgs else plain[0][:300]
             closer = asst_msgs[-1][:300] if asst_msgs else plain[-1][:300]
             return (
-                f"**{title}** — {len(plain)} messages\n\n"
+                f"**{title}** - {len(plain)} messages\n\n"
                 f"Opens with: {opener}{'...' if len(opener) == 300 else ''}\n\n"
                 f"Latest: {closer}{'...' if len(closer) == 300 else ''}"
             )
@@ -919,14 +1263,26 @@ class ChatConnector:
             return f"Summary error: {e}"
 
     def find_related_chats(self, file_name: str, top_k: int = 5, client: str = "default") -> list[dict]:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path or not os.path.exists(file_path):
             return [{"file": f"File {file_name} not found.", "score": 0}]
         try:
             raw = self._read_chat_file(file_path)
             query = " ".join(parse_to_plain_text(raw))
-            results = self.search_chats_semantic(query, top_k=top_k + 1, client=client)
-            return [r for r in results if r["file"] != os.path.basename(file_path)][:top_k]
+            results = self.search_chats_semantic(query, top_k=top_k + 5, client=client)
+            
+            filtered_results = []
+            for r in results:
+                r_parsed = _parse_part_file_name(r["file"])
+                r_orig = r_parsed[0] if r_parsed else r["file"]
+                if r_orig != orig_file_name:
+                    filtered_results.append(r)
+            return filtered_results[:top_k]
         except Exception as e:
             return [{"file": f"Error: {e}", "score": 0}]
 
@@ -1109,7 +1465,12 @@ class ChatConnector:
     # ── Intelligence layer ──────────────────────────────────────────────────
 
     def extract_action_items(self, file_name: str, client: str = "default") -> list[str]:
-        file_path = self._safe_chat_path(file_name, client)
+        parsed = _parse_part_file_name(file_name)
+        if parsed:
+            orig_file_name, _ = parsed
+        else:
+            orig_file_name = file_name
+        file_path = self._safe_chat_path(orig_file_name, client)
         if not file_path or not os.path.exists(file_path):
             return [f"File {file_name} not found."]
         try:
@@ -1175,14 +1536,24 @@ class ChatConnector:
 
     def compare_two_chats(self, file_name_a: str, file_name_b: str, client: str = "default") -> str:
         def keywords_for(file_name: str) -> set[str]:
-            path = self._safe_chat_path(file_name, client)
+            parsed = _parse_part_file_name(file_name)
+            if parsed:
+                orig_file_name = parsed[0]
+            else:
+                orig_file_name = file_name
+            path = self._safe_chat_path(orig_file_name, client)
             if not path or not os.path.exists(path):
                 return set()
             raw = self._read_chat_file(path)
             return set(_tokenize(" ".join(parse_to_plain_text(raw))))
 
-        kw_a = keywords_for(file_name_a)
-        kw_b = keywords_for(file_name_b)
+        parsed_a = _parse_part_file_name(file_name_a)
+        orig_a = parsed_a[0] if parsed_a else file_name_a
+        parsed_b = _parse_part_file_name(file_name_b)
+        orig_b = parsed_b[0] if parsed_b else file_name_b
+
+        kw_a = keywords_for(orig_a)
+        kw_b = keywords_for(orig_b)
         if not kw_a or not kw_b:
             return "One or both files not found or empty."
         shared = sorted(kw_a & kw_b)[:30]
