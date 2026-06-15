@@ -19,6 +19,7 @@
 <p align="center">
   <a href="#key-architectural-capabilities">Why</a> ·
   <a href="#command-line-interface-mechanics">CLI Mechanics</a> ·
+  <a href="#interactive-setup-wizard">Setup Wizard</a> ·
   <a href="#tool-reference-catalog">Tool Catalog</a> ·
   <a href="#installation-and-configuration">Installation</a> ·
   <a href="#automatic-session-saving-in-cursor-and-vs-code">Auto-Save</a> ·
@@ -57,19 +58,33 @@ By condensing repetitive syntax and large raw code snippets, Chronicle achieves 
 The `cli.py` file serves as the system's entry point, registering a unified `chronicle` command on the system path via the `pyproject.toml` configuration (`chronicle = "cli:main"`). The CLI contains several advanced capabilities designed for platform compatibility and developer ergonomics:
 
 ### 1. Unified Chronicle Global Command
-When run without subcommands, the `chronicle` command launches the stdio transport server for MCP clients:
-```bash
-chronicle
-```
+When run without subcommands, the `chronicle` command behaves contextually:
+* **Interactive TTY Terminal**: Launches the interactive setup wizard.
+* **Non-TTY/Subprocesses**: Launches the stdio transport server for MCP clients.
+
 It accepts options like `--chats-folder` to configure custom storage directories, and exposes the subcommands `add` and `split`.
 
-### 2. Cross-Platform Path Resolution Rules
+### 2. Interactive Setup Wizard
+Chronicle features an interactive, zero-dependency TTY setup wizard. Running `chronicle setup` or executing `chronicle` without arguments in an interactive terminal starts the setup flow:
+
+> [!TIP]
+> The setup wizard is styled with a premium purple theme, supporting arrow-key navigation, spacebar toggles, inline input editing, and real-time path validation!
+
+* **Phase 1: Monolithic Split Engine**: Interactive option to partition monolithic conversation histories into distinct thread logs in your storage folder.
+* **Phase 2: Storage Directory Configuration**: Configures your local chats directory (defaulting to `~/universal-chats`).
+* **Phase 3: Interactive App/IDE Selector**: TTY menu using arrow keys and the spacebar to select your environments:
+  * Out-of-the-box support for standard targets (Cursor, VS Code, Trae, Claude Code, and Claude/ChatGPT Desktop).
+  * Hierarchical sub-options for AntiGravity variants (AntiGravity IDE, AntiGravity 2.0, AntiGravity CLI).
+  * Custom app configuration under **Other** with real-time directory existence validation. Unrecognized apps that are not found on the system will display a clean warning at the bottom of the active menu.
+* **Phase 4: Configuration Injection & Live Dashboard**: Injects the MCP server config into all selected IDEs and displays a summary dashboard of your active Chronicle environment.
+
+### 3. Cross-Platform Path Resolution Rules
 The CLI implements path resolution logic using Python's `sys.platform` and `pathlib.Path` to match standard OS conventions for user directories:
 * **macOS (Darwin)**: Resolves configurations to the user's home Library folder, typically under `~/Library/Application Support/`.
 * **Windows (Win32)**: Leverages the `%APPDATA%` environment variable, falling back to `~/AppData/Roaming/` if the variable is not set.
 * **Linux**: Follows the XDG base directory specification, resolving to `~/.config/`.
 
-### 3. Native IDE Integration and Fallback Engine
+### 4. Native IDE Integration and Fallback Engine
 The CLI wrapper provides out-of-the-box support for leading AI-assisted development tools and editors:
 * **Cursor**: Reads and writes configurations to `~/.cursor/mcp.json`.
 * **Claude Code**: Integrates with `~/.claude.json`.
@@ -83,11 +98,11 @@ The CLI wrapper provides out-of-the-box support for leading AI-assisted developm
   * Linux: `~/.config/Trae/mcp.json`
 * **Dynamic Fallback Engine**: For emerging platforms (such as Kiro, MiniMax, Qwen Code, Grok Build, or Antigravity), the CLI employs a fallback search pattern. It first checks for a user home dot-directory configuration (such as `~/.<app_name>/mcp.json`). If that directory is missing, it creates the app-specific configuration in the standard application support folder for the respective platform (e.g. `~/Library/Application Support/<app_name>/mcp.json` on macOS).
 
-### 4. Prevent ENOENT Errors with shutil.which
+### 5. Prevent ENOENT Errors with shutil.which
 Host clients (like Claude Desktop or Cline) spawn MCP servers within isolated subprocesses that often do not inherit the user's login shell environment variables (such as custom paths defined in `.bashrc` or `.zshrc`). Attempting to call `uvx` or global scripts directly can raise an `ENOENT` connection error if the host application cannot find the executable.
 To solve this, the `chronicle add` utility uses Python's `shutil.which("uvx")` to scan the host machine path during configuration. It resolves the absolute system path of `uvx` (such as `/opt/homebrew/bin/uvx` or `/usr/local/bin/uvx`) and writes this absolute path directly to the IDE's JSON configuration file.
 
-### 5. Structural Split Engine Subcommand
+### 6. Structural Split Engine Subcommand
 Users downloading conversational archives from ChatGPT or Claude are often provided with a single monolithic JSON file (such as `conversations.json`) containing hundreds of distinct threads.
 The `chronicle split` subcommand parses these large payloads and splits them into individual JSON files:
 * Automatically detects the schema format (nested conversation trees or flat lists).
@@ -99,7 +114,7 @@ The `chronicle split` subcommand parses these large payloads and splits them int
 chronicle split /path/to/conversations.json --out /path/to/output_directory
 ```
 
-### 6. Global Chats Folder Configuration
+### 7. Global Chats Folder Configuration
 By default, Chronicle stores processed archives in `~/.chronicle/chats`. You can configure a custom global storage folder using the `--chats-folder` parameter:
 ```bash
 chronicle --chats-folder /path/to/custom/chats
@@ -209,6 +224,13 @@ Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ## Installation and Configuration
+
+### Quick Setup (Recommended)
+Install the package directly from PyPI and run the interactive setup wizard to configure your storage paths and editor integrations automatically:
+```bash
+pip install chronicle-mcp-server
+chronicle setup
+```
 
 ### System Prerequisites
 * Python 3.10 or higher.
