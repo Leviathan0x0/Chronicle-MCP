@@ -423,6 +423,64 @@ class ChatConnectorTests(unittest.TestCase):
         path = os.path.join(self.cc.resolve_chats_dir("default"), "ops_file.json")
         self.assertFalse(os.path.exists(path))
 
+    def test_cli_setup_wizard_mocked_run(self):
+        import sys
+        import subprocess
+        # Inputs:
+        # Phase 1: Enter (skip split) -> ""
+        # Phase 2: Enter (default storage path) -> ""
+        # Phase 3: "1, 2" (select Cursor and VS Code) -> "1, 2"
+        inputs = "\n\n1, 2\n"
+        
+        env = dict(os.environ)
+        env["HOME"] = self.tmp
+        
+        process = subprocess.Popen(
+            [sys.executable, "cli.py", "setup"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+        stdout, stderr = process.communicate(input=inputs, timeout=5)
+        
+        self.assertEqual(process.returncode, 0)
+        self.assertIn("Chronicle Archive Setup", stdout)
+        self.assertIn("Chronicle Environment Live", stdout)
+        self.assertIn("Storage Folder", stdout)
+        self.assertIn("Cursor", stdout)
+        self.assertIn("VS Code", stdout)
+
+    def test_cli_setup_wizard_invalid_fallback(self):
+        import sys
+        import subprocess
+        # Inputs:
+        # Phase 1: Enter (skip split) -> ""
+        # Phase 2: Enter (default storage path) -> ""
+        # Phase 3: "1, 9" (select Cursor and Other) -> "1, 9"
+        # Enter name of custom app -> "MyInvalidIDE"
+        # Proceed with installing to valid cursor -> "y"
+        inputs = "\n\n1, 9\nMyInvalidIDE\ny\n"
+        
+        env = dict(os.environ)
+        env["HOME"] = self.tmp
+        
+        process = subprocess.Popen(
+            [sys.executable, "cli.py", "setup"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+        stdout, stderr = process.communicate(input=inputs, timeout=5)
+        
+        self.assertEqual(process.returncode, 0)
+        self.assertIn('App/IDE "myinvalidide" is not currently supported by auto-install.', stdout)
+        self.assertIn("Would you like to proceed with installing", stdout)
+        self.assertIn("Cursor", stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
