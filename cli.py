@@ -229,7 +229,7 @@ def select_apps_interactive():
         {"id": "claude-desktop", "title": "Claude Desktop", "checked": False},
         {"id": "chatgpt-desktop", "title": "ChatGPT Desktop", "checked": False},
         {"id": "antigravity", "title": "Antigravity", "checked": False},
-        {"id": "other", "title": "Other (Custom Entry)", "checked": False}
+        {"id": "other", "title": "Other (Enter custom entry)", "checked": False}
     ]
     
     sub_options = [
@@ -249,6 +249,7 @@ def select_apps_interactive():
 
     cursor_idx = 0
     lines_count = 0
+    custom_input = ""
     
     print("\n\033[1;35mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
     print("\033[90m  (Use arrow keys to navigate, Space to toggle, Enter to confirm)\033[0m")
@@ -270,21 +271,26 @@ def select_apps_interactive():
             lines = []
             for idx, item in enumerate(visible_items):
                 is_focused = (idx == cursor_idx)
-                
-                if item["checked"]:
-                    checked_str = "\033[1;32m[✓]\033[0m"
-                else:
-                    checked_str = "\033[90m[ ]\033[0m"
-                    
                 indent = "    " if item.get("indent") else "  "
-                pointer = "\033[1;36m>\033[0m " if is_focused else "  "
+                pointer = "\033[1;36m❯\033[0m " if is_focused else "  "
                 
-                if is_focused:
-                    text = f"\033[1;37m{item['title']}\033[0m"
+                if item["id"] == "other":
+                    # Render other app name input inline (no checkbox, aligned with checkbox start)
+                    val_color = "\033[1;37m" if is_focused else "\033[37m"
+                    text = f"\033[90mOther (Enter custom entry):\033[0m {val_color}{custom_input}\033[0m"
+                    lines.append(f"{pointer}{indent}{text}")
                 else:
-                    text = f"\033[37m{item['title']}\033[0m"
-                    
-                lines.append(f"{pointer}{indent}{checked_str} {text}")
+                    if item["checked"]:
+                        checked_str = "\033[1;32m[✓]\033[0m"
+                    else:
+                        checked_str = "\033[90m[ ]\033[0m"
+                        
+                    if is_focused:
+                        text = f"\033[1;37m{item['title']}\033[0m"
+                    else:
+                        text = f"\033[37m{item['title']}\033[0m"
+                        
+                    lines.append(f"{pointer}{indent}{checked_str} {text}")
                 
             sys.stdout.write("\n".join(lines) + "\n")
             sys.stdout.flush()
@@ -297,20 +303,33 @@ def select_apps_interactive():
                 cursor_idx = (cursor_idx + 1) % len(visible_items)
             elif key == ' ':  # Space
                 item = visible_items[cursor_idx]
-                item["checked"] = not item["checked"]
-                
-                if item["id"] == "antigravity" and not item["checked"]:
-                    for sub in sub_options:
-                        sub["checked"] = False
+                if item["id"] == "other":
+                    custom_input += " "
+                else:
+                    item["checked"] = not item["checked"]
+                    
+                    if item["id"] == "antigravity" and not item["checked"]:
+                        for sub in sub_options:
+                            sub["checked"] = False
             elif key == '\r' or key == '\n':  # Enter
                 break
             elif key == '\x03' or key == '\x1b':  # Ctrl+C or Escape
                 raise KeyboardInterrupt
+            elif len(key) == 1 and 32 <= ord(key) <= 126:
+                # Printable ASCII character input
+                item = visible_items[cursor_idx]
+                if item["id"] == "other":
+                    custom_input += key
+            elif key == '\x7f' or key == '\x08':
+                # Backspace
+                item = visible_items[cursor_idx]
+                if item["id"] == "other":
+                    custom_input = custom_input[:-1]
     finally:
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
         
-    return visible_items
+    return visible_items, custom_input
 
 def run_setup_wizard():
     # Phase 1: The Temporal Split
@@ -386,18 +405,14 @@ def run_setup_wizard():
             
         if is_interactive:
             try:
-                visible_items = select_apps_interactive()
-                has_other = False
+                visible_items, custom_input = select_apps_interactive()
                 for item in visible_items:
-                    if item["checked"]:
-                        if item["id"] == "other":
-                            has_other = True
-                        else:
-                            selected_apps.append(item["id"])
+                    if item["checked"] and item["id"] != "other":
+                        selected_apps.append(item["id"])
                 
-                if has_other:
-                    custom_entry = input("Enter the name of your custom application: ").strip()
-                    custom_entry_lower = custom_entry.lower()
+                custom_input_stripped = custom_input.strip()
+                if custom_input_stripped:
+                    custom_entry_lower = custom_input_stripped.lower()
                     if custom_entry_lower in supported_targets:
                         selected_apps.append(custom_entry_lower)
                     else:

@@ -535,7 +535,7 @@ class ChatConnectorTests(unittest.TestCase):
              patch('sys.stdin.isatty', return_value=True), \
              patch('sys.stdout.write'):
             
-            result = cli.select_apps_interactive()
+            result, custom_input = cli.select_apps_interactive()
             
             # Verify which items are checked
             checked_ids = [item["id"] for item in result if item["checked"]]
@@ -545,6 +545,27 @@ class ChatConnectorTests(unittest.TestCase):
             self.assertIn("antigravity-ide", checked_ids)
             self.assertNotIn("cursor", checked_ids)
             self.assertNotIn("antigravity-cli", checked_ids)
+
+    def test_cli_setup_wizard_interactive_custom_input(self):
+        from unittest.mock import patch
+        import cli
+        
+        # Navigate down to other (8 times Down), type "myide", press Backspace, type "es", Enter
+        mock_keys = [
+            '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', # Down 8 times
+            'm', 'y', 'i', 'd', 'e', # type "myide"
+            '\x7f', # Backspace (removes "e")
+            'e', 's', # type "es"
+            '\n' # Enter
+        ]
+        
+        with patch('cli.getch', side_effect=mock_keys), \
+             patch('sys.stdin.isatty', return_value=True), \
+             patch('sys.stdout.write'):
+            
+            result, custom_input = cli.select_apps_interactive()
+            
+            self.assertEqual(custom_input, "myides")
 
 
 if __name__ == "__main__":
