@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chronicle-mcp-server"
-version = "1.1.16"
+version = "1.1.17"
 description = "Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens."
 readme = "README.md"
 authors = [{ name = "Leviathan" }]

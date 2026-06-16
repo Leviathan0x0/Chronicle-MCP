@@ -158,6 +158,24 @@ def manage_session_state(
     )
 
 
+@mcp.tool()
+def save_handoff_receipt(
+    touched_files: list[str],
+    open_promises: list[str],
+    skipped_checks: list[str],
+    next_safe_action: str,
+    client: str = "default",
+) -> str:
+    """Save a handoff receipt for the current run, detailing active state, open commitments, skipped checks, and the next safe action."""
+    return cc.save_handoff_receipt(
+        touched_files=touched_files,
+        open_promises=open_promises,
+        skipped_checks=skipped_checks,
+        next_safe_action=next_safe_action,
+        client=client
+    )
+
+
 @mcp.prompt()
 def start_session() -> str:
     """Get system instructions for auto-saving conversations in the local Chronicle archive."""

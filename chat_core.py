@@ -316,7 +316,7 @@ def calculate_bm25_score(
     doc_lengths: dict[str, int],                  # {"doc_id": length}
     n_docs: int,
     k1: float = 1.5,
-    b: float = 0.75
+    b: float = 0.85
 ) -> float:
     """Computes the Okapi BM25 score for a document against a set of query terms."""
     if n_docs == 0:
@@ -449,29 +449,45 @@ def _chunk_conversation(messages: list[dict]) -> list[list[dict]]:
     if not messages:
         return []
         
-    segments = []
-    current_segment = [messages[0]]
+    split_indices = set()
     
+    # Rule 1 (temporal split): split the chat if there is a gap of more than 1800 seconds (30 minutes) between any consecutive messages.
     for i in range(1, len(messages)):
-        msg_prev = messages[i-1]
-        msg_curr = messages[i]
-        
-        ts_prev = msg_prev.get("timestamp")
-        ts_curr = msg_curr.get("timestamp")
-        
-        split_temporal = False
+        ts_prev = messages[i-1].get("timestamp")
+        ts_curr = messages[i].get("timestamp")
         if ts_prev is not None and ts_curr is not None:
             if ts_curr - ts_prev > 1800:
-                split_temporal = True
+                split_indices.add(i)
                 
-        if split_temporal:
-            segments.append(current_segment)
-            current_segment = [msg_curr]
-        else:
-            current_segment.append(msg_curr)
+    # Rule 2 (lexical drift split): compare sliding groups of 4 messages.
+    for i in range(4, len(messages)):
+        group_a = messages[i-4:i]
+        group_b = messages[i-3:i+1]
+        
+        text_a = " ".join(msg.get("text", "") for msg in group_a)
+        text_b = " ".join(msg.get("text", "") for msg in group_b)
+        
+        tokens_a = set(re.findall(r'[a-z0-9]+', text_a.lower()))
+        tokens_b = set(re.findall(r'[a-z0-9]+', text_b.lower()))
+        
+        union = tokens_a.union(tokens_b)
+        jaccard = len(tokens_a.intersection(tokens_b)) / len(union) if union else 1.0
+        
+        if jaccard < 0.12:
+            split_indices.add(i)
             
-    segments.append(current_segment)
-    
+    # Split into initial segments
+    segments = []
+    current_segment = []
+    for i, msg in enumerate(messages):
+        if i in split_indices and current_segment:
+            segments.append(current_segment)
+            current_segment = []
+        current_segment.append(msg)
+    if current_segment:
+        segments.append(current_segment)
+
+    # Length-based chunking on each segment
     final_chunks = []
     for segment in segments:
         if len(segment) > 30:
@@ -488,25 +504,41 @@ def _chunk_conversation(messages: list[dict]) -> list[list[dict]]:
     return final_chunks
 
 
+
 def _part_file_name(file_name: str, p: int) -> str:
-    if file_name.endswith(".json.gz"):
-        base = file_name[:-8]
-        return f"{base}__part_{p}.json.gz"
-    elif file_name.endswith(".json"):
+    if file_name.endswith(".json"):
         base = file_name[:-5]
         return f"{base}__part_{p}.json"
-    return f"{file_name}__part_{p}.json"
+    return f"{file_name}__part_{p}"
 
 
 def _parse_part_file_name(file_name: str) -> tuple[str, int] | None:
-    match = re.match(r"^(.*)__part_(\d+)(?:\.json(\.gz)?)?$", file_name)
-    if not match:
-        return None
-    base = match.group(1)
-    part_num = int(match.group(2))
-    is_gz = match.group(3) is not None
-    orig_file_name = f"{base}.json.gz" if is_gz else f"{base}.json"
-    return orig_file_name, part_num
+    if "__part_" in file_name:
+        parts = file_name.rsplit("__part_", 1)
+        if len(parts) == 2:
+            base, rest = parts
+            if rest.endswith(".json"):
+                idx_str = rest[:-5]
+                if idx_str.isdigit():
+                    return f"{base}.json", int(idx_str)
+            elif rest.isdigit():
+                return base, int(rest)
+    return None
+
+
+def _is_part_of_file(doc_key: str, file_name: str, client: str) -> bool:
+    prefix = f"{client}/"
+    if not doc_key.startswith(prefix):
+        return False
+    rel_key = doc_key[len(prefix):]
+    if rel_key == file_name:
+        return True
+    parsed = _parse_part_file_name(rel_key)
+    if parsed is not None:
+        orig_file, _ = parsed
+        return orig_file == file_name
+    return False
+
 
 
 class ChatConnector:
@@ -701,27 +733,19 @@ class ChatConnector:
             doc_lengths = index_data["doc_lengths"]
             index_map = index_data["index"]
 
-            if file_name.endswith(".json.gz"):
-                base_name = file_name[:-8]
-            elif file_name.endswith(".json"):
-                base_name = file_name[:-5]
-            else:
-                base_name = file_name
-            part_prefix = f"{client}/{base_name}__part_"
-
             for keyword, docs in list(index_map.items()):
                 for dkey in list(docs.keys()):
-                    if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                    if _is_part_of_file(dkey, file_name, client):
                         del docs[dkey]
                 if not docs:
                     del index_map[keyword]
             
             for dkey in list(doc_lengths.keys()):
-                if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                if _is_part_of_file(dkey, file_name, client):
                     del doc_lengths[dkey]
                     
             for dkey in list(timestamps.keys()):
-                if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                if dkey == doc_key_prefix:
                     del timestamps[dkey]
 
             # Index new parts
@@ -745,13 +769,6 @@ class ChatConnector:
 
     def _remove_file_from_index(self, file_name: str, client: str = "default") -> None:
         doc_key_prefix = f"{client}/{file_name}"
-        if file_name.endswith(".json.gz"):
-            base_name = file_name[:-8]
-        elif file_name.endswith(".json"):
-            base_name = file_name[:-5]
-        else:
-            base_name = file_name
-        part_prefix = f"{client}/{base_name}__part_"
 
         index_data = self._load_serialized_index()
         timestamps = index_data.get("timestamps", {})
@@ -760,18 +777,18 @@ class ChatConnector:
 
         changed = False
         for dkey in list(timestamps.keys()):
-            if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+            if dkey == doc_key_prefix:
                 del timestamps[dkey]
                 changed = True
 
         for dkey in list(doc_lengths.keys()):
-            if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+            if _is_part_of_file(dkey, file_name, client):
                 del doc_lengths[dkey]
                 changed = True
 
         for keyword, docs in list(index_map.items()):
             for dkey in list(docs.keys()):
-                if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                if _is_part_of_file(dkey, file_name, client):
                     del docs[dkey]
                     changed = True
             if not docs:
@@ -803,23 +820,15 @@ class ChatConnector:
                     chunks = _chunk_conversation(messages)
 
                     # Remove old entries for this file/parts
-                    if file.endswith(".json.gz"):
-                        base_name = file[:-8]
-                    elif file.endswith(".json"):
-                        base_name = file[:-5]
-                    else:
-                        base_name = file
-                    part_prefix = f"{client}/{base_name}__part_"
-
                     for kw, docs in list(index_map.items()):
                         for dkey in list(docs.keys()):
-                            if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                            if _is_part_of_file(dkey, file, client):
                                 del docs[dkey]
                         if not docs:
                             del index_map[kw]
 
                     for dkey in list(doc_lengths.keys()):
-                        if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                        if _is_part_of_file(dkey, file, client):
                             del doc_lengths[dkey]
 
                     # Add new entries for parts
@@ -846,22 +855,15 @@ class ChatConnector:
                 
                 # Get the filename from doc_key_prefix
                 file_name = doc_key_prefix.split("/", 1)[1]
-                if file_name.endswith(".json.gz"):
-                    base_name = file_name[:-8]
-                elif file_name.endswith(".json"):
-                    base_name = file_name[:-5]
-                else:
-                    base_name = file_name
-                part_prefix = f"{client}/{base_name}__part_"
 
                 # Delete any parts as well
                 for dkey in list(doc_lengths.keys()):
-                    if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                    if _is_part_of_file(dkey, file_name, client):
                         del doc_lengths[dkey]
 
                 for kw, docs in list(index_map.items()):
                     for dkey in list(docs.keys()):
-                        if dkey == doc_key_prefix or dkey.startswith(part_prefix):
+                        if _is_part_of_file(dkey, file_name, client):
                             del docs[dkey]
                     if not docs:
                         del index_map[kw]
@@ -950,7 +952,7 @@ class ChatConnector:
                 file_name = doc_key.split("/", 1)[1]
                 scored_candidates.append((file_name, bm25_score))
 
-            scored_candidates.sort(key=lambda x: (-x[1], x[0]))
+            scored_candidates.sort(key=lambda x: (0 if "handoff_receipt" in x[0] else 1, -x[1], x[0]))
             results = [item[0] for item in scored_candidates]
             if len(results) > limit:
                 return results[:limit] + [
@@ -1230,7 +1232,7 @@ class ChatConnector:
                 "score": round(decayed_score, 4)
             })
 
-        scored.sort(key=lambda x: x["score"], reverse=True)
+        scored.sort(key=lambda x: (1 if "handoff_receipt" in x["file"] else 0, x["score"]), reverse=True)
         return scored[:top_k]
 
     def get_chat_summary(self, file_name: str, client: str = "default") -> str:
@@ -1862,6 +1864,53 @@ class ChatConnector:
             return self.delete_stored_chat(file_name=target, confirm=confirm, client=client)
         else:
             return f"Error: Unknown action '{action}'."
+
+    def save_handoff_receipt(
+        self,
+        touched_files: list[str],
+        open_promises: list[str],
+        skipped_checks: list[str],
+        next_safe_action: str,
+        client: str = "default",
+    ) -> str:
+        import time
+        import json
+        
+        chats_dir = self.resolve_chats_dir(client)
+        os.makedirs(chats_dir, exist_ok=True)
+        
+        timestamp = int(time.time())
+        file_name = f"handoff_receipt_{timestamp}.json"
+        file_path = os.path.join(chats_dir, file_name)
+        
+        receipt_data = {
+            "touched_files": touched_files,
+            "open_promises": open_promises,
+            "skipped_checks": skipped_checks,
+            "next_safe_action": next_safe_action,
+            "timestamp": timestamp,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "text": (
+                        f"Handoff Receipt\n"
+                        f"Touched Files: {', '.join(touched_files)}\n"
+                        f"Open Promises: {', '.join(open_promises)}\n"
+                        f"Skipped Checks: {', '.join(skipped_checks)}\n"
+                        f"Next Safe Action: {next_safe_action}"
+                    ),
+                    "timestamp": timestamp
+                }
+            ]
+        }
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(receipt_data, f, indent=2)
+            
+        # Trigger index sync to immediately index the new handoff receipt
+        self._sync_serialized_index(client)
+        
+        return f"Handoff receipt saved successfully to {file_name}"
 
 
 _default_connector = ChatConnector()

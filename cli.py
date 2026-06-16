@@ -260,7 +260,7 @@ def select_apps_interactive(error_msgs=None):
     lines_count = 0
     custom_input = ""
     
-    print("\n\033[1;35mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
+    print("\n\033[38;5;99mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
     print("\033[90m  (Use arrow keys to navigate, Space to toggle, Enter to confirm)\033[0m")
     
     sys.stdout.write("\033[?25l")
@@ -281,7 +281,7 @@ def select_apps_interactive(error_msgs=None):
             for idx, item in enumerate(visible_items):
                 is_focused = (idx == cursor_idx)
                 indent = "    " if item.get("indent") else "  "
-                pointer = "\033[1;35m❯\033[0m " if is_focused else "  "
+                pointer = "\033[38;5;99m❯\033[0m " if is_focused else "  "
                 
                 if item["id"] == "other":
                     # Render other app name input inline (no checkbox, aligned with checkbox start)
@@ -361,7 +361,7 @@ def select_apps_interactive(error_msgs=None):
 def run_setup_wizard():
     # Phase 1: The Temporal Split
     print()
-    print("\033[1;35m── Chronicle Archive Setup ─────────────────────────────────────\033[0m")
+    print("\033[38;5;99m── Chronicle Archive Setup ─────────────────────────────────────\033[0m")
     print("Do you want to split a single conversations.json file?")
     export_path_str = input("Enter path to export file (or press ENTER to skip): ").strip()
     
@@ -446,7 +446,7 @@ def run_setup_wizard():
                 sys.exit(1)
         else:
             # Fallback for non-TTY / tests / Windows automated setups
-            print("\n\033[1;35mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
+            print("\n\033[38;5;99mPlease select the applications/IDEs where you want to install Chronicle MCP:\033[0m")
             print("  [1] Cursor")
             print("  [2] VS Code (Cline / Roo Code)")
             print("  [3] Trae IDE")
@@ -556,7 +556,7 @@ def run_setup_wizard():
         update_json_config(app)
         installed_apps.append(app_titles.get(app, app.title().replace("-", " ")))
         
-    print("\n\033[1;35m── Chronicle Environment Live ──────────────────────────────────\033[0m")
+    print("\n\033[38;5;99m── Chronicle Environment Live ──────────────────────────────────\033[0m")
     print(f" \033[32m✓\033[0m Storage Folder : {resolved_storage_path}")
     if installed_apps:
         print(f" \033[32m✓\033[0m Auto-Saved Configs for: [{', '.join(installed_apps)}]")
@@ -565,7 +565,7 @@ def run_setup_wizard():
     print("\n  How to run the server manually:")
     print("  $ uvx --from chronicle-mcp-server chronicle")
     print("\n  recalled in <1ms · 100% local · zero cloud")
-    print("\033[1;35m────────────────────────────────────────────────────────────────\033[0m")
+    print("\033[38;5;99m────────────────────────────────────────────────────────────────\033[0m")
 
 def main():
     # Route to the setup wizard if len(sys.argv) == 1 and sys.stdin.isatty(), or if sys.argv[1] == "setup"

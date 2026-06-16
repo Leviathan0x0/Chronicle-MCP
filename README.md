@@ -51,6 +51,12 @@ To verify these savings, we executed multi-turn conversation benchmarks. The gra
 
 By condensing repetitive syntax and large raw code snippets, Chronicle achieves up to 40 percent token savings, directly lowering API usage costs and preventing context-window exhaustion.
 
+### Hybrid Splitting & BM25 Scoring Search Engine
+To make workspace searches extremely sharp and retrieve context-aware answers, Chronicle incorporates a state-of-the-art retrieval pipeline:
+* **Hybrid Document Splitting**: Slices long conversations into logical parts at indexing time. Splits are triggered temporally if a gap of more than 1800 seconds (30 minutes) occurs between consecutive messages, or lexically if the Jaccard similarity of vocabulary sliding groups of 4 messages drops below 0.12. Each split is stored and queried as a virtual document (`filename__chunk_idx`).
+* **Okapi BM25 Scorer**: Replaces naive keyword matching and raw TF-IDF with Okapi BM25 scoring (`k1 = 1.5` and `b = 0.85`). The parameter `b = 0.85` enforces an aggressive length penalty, which ensures long, rambling chat logs do not overshadow short, precise bug fixes.
+* **Handoff Receipts Prioritization**: Integrates a direct tool to save compact agent state files documenting modified paths, commitments, skipped tests, and next actions. Active handoff receipts are automatically prioritized and bubbled to the very top of search results.
+
 ---
 
 ## Command Line Interface Mechanics
@@ -243,11 +249,11 @@ This saves the target path to a local settings file (`~/.chronicle_settings.json
 Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set.
 
 ### 1. `search_history`
-* **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, TF-IDF semantic, date range, and related chat lookups.
+* **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, Okapi BM25 semantic, date range, and related chat lookups.
 * **Parameters**:
   * `query` (str, default: ""): The search query string or keywords list.
   * `method` (str, default: "semantic"): Search methodology. Supported options:
-    * `semantic`: Standard semantic retrieval using TF-IDF cosine similarity.
+    * `semantic`: Standard semantic retrieval using Okapi BM25 scoring with exponential temporal decay.
     * `keyword`: Exact string matching against terms in files.
     * `date_range`: Filters files modified within a date interval (requires `start_date` and `end_date`).
     * `related`: Finds archives semantically close to a reference file.
@@ -336,6 +342,15 @@ Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This
   * `file_name` (str, optional): Target file name.
   * `confirm` (bool, default: False): Confirms deletion.
   * `new_messages` (list of dicts, optional): Message list to merge.
+  * `client` (str, default: "default"): Subfolder client identifier.
+
+### 7. `save_handoff_receipt`
+* **Description**: Saves a handoff receipt for the current execution to document the active state (touched files, open promises, skipped checks, next safe actions). Saved receipts are indexed and automatically bubbled to the very top of search results.
+* **Parameters**:
+  * `touched_files` (list of strings): Paths to files modified during the run.
+  * `open_promises` (list of strings): List of unresolved commitments or tasks left open.
+  * `skipped_checks` (list of strings): List of tests or validation tasks skipped.
+  * `next_safe_action` (str): A clear, direct prompt instructing the next agent on exactly what to do next.
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ## Installation and Configuration
