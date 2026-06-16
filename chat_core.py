@@ -526,11 +526,66 @@ def _parse_part_file_name(file_name: str) -> tuple[str, int] | None:
     return None
 
 
+def _evaluate_stale_conditions(receipt_data: dict, base_dir: str) -> bool:
+    """
+    Monitors file modifications relative to the receipt creation time.
+    Returns True if any file in invalidation.stale_if is newer than the receipt timestamp.
+    """
+    import os
+    import glob
+    creation_time = receipt_data.get("timestamp", 0.0)
+    stale_if = receipt_data.get("invalidation", {}).get("stale_if", [])
+    for target in stale_if:
+        fpath = target.get("file_path")
+        glob_pat = target.get("glob_pattern")
+        if fpath:
+            resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
+            if os.path.exists(resolved_fpath):
+                mtime = os.path.getmtime(resolved_fpath)
+                if mtime > creation_time:
+                    return True
+        elif glob_pat:
+            resolved_glob = glob_pat if os.path.isabs(glob_pat) else os.path.join(base_dir, glob_pat)
+            for matched_path in glob.glob(resolved_glob, recursive=True):
+                if os.path.exists(matched_path):
+                    mtime = os.path.getmtime(matched_path)
+                    if mtime > creation_time:
+                        return True
+    return False
+
+
+def _resolve_active_receipt(receipt_data: dict, base_dir: str) -> dict:
+    """
+    Catches stale states, intercepts the payload, and dynamically mutates
+    both the status to 'blocked/stale' and the next_safe_action prompt.
+    """
+    if _evaluate_stale_conditions(receipt_data, base_dir):
+        receipt_data["status"] = "blocked/stale"
+        
+        invalid_causes = []
+        import os
+        stale_if = receipt_data.get("invalidation", {}).get("stale_if", [])
+        creation_time = receipt_data.get("timestamp", 0.0)
+        for target in stale_if:
+            fpath = target.get("file_path")
+            if fpath:
+                resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
+                if os.path.exists(resolved_fpath) and os.path.getmtime(resolved_fpath) > creation_time:
+                    invalid_causes.append(fpath)
+                    
+        cause_str = ", ".join(invalid_causes) if invalid_causes else "monitored files"
+        original_action = receipt_data.get("invalidation", {}).get("next_safe_action", "")
+        receipt_data["invalidation"]["next_safe_action"] = (
+            f"Blocked by stale/modified files ({cause_str}). "
+            f"Mandatory active re-observation required. Run verification tests before proceeding. "
+            f"Original action: {original_action}"
+        )
+    return receipt_data
+
+
 def _is_receipt_stale(file_path: str, creation_timestamp: float, base_dir: str) -> bool:
     """
     Checks if a handoff receipt is stale based on invalidation.stale_if.
-    If any target file in stale_if has a modification time newer than creation_timestamp,
-    returns True.
     """
     import os
     import json
@@ -539,27 +594,10 @@ def _is_receipt_stale(file_path: str, creation_timestamp: float, base_dir: str) 
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        stale_if = data.get("invalidation", {}).get("stale_if", [])
-        for target in stale_if:
-            fpath = target.get("file_path")
-            glob_pat = target.get("glob_pattern")
-            if fpath:
-                resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
-                if os.path.exists(resolved_fpath):
-                    mtime = os.path.getmtime(resolved_fpath)
-                    if mtime > creation_timestamp:
-                        return True
-            elif glob_pat:
-                import glob
-                resolved_glob = glob_pat if os.path.isabs(glob_pat) else os.path.join(base_dir, glob_pat)
-                for matched_path in glob.glob(resolved_glob, recursive=True):
-                    if os.path.exists(matched_path):
-                        mtime = os.path.getmtime(matched_path)
-                        if mtime > creation_timestamp:
-                            return True
+        return _evaluate_stale_conditions(data, base_dir)
     except Exception:
-        pass
-    return False
+        return False
+
 
 
 def _is_part_of_file(doc_key: str, file_name: str, client: str) -> bool:
@@ -2147,6 +2185,7 @@ class ChatConnector:
                     try:
                         with open(file_path, "r", encoding="utf-8") as f:
                             data = json.load(f)
+                            data = _resolve_active_receipt(data, self.base_dir)
                             rid = data.get("receipt_id")
                             if rid:
                                 receipts[rid] = {

@@ -15,6 +15,25 @@ mcp = FastMCP(
 )
 cc = get_connector()
 
+
+def _evaluate_stale_conditions(receipt_data: dict, base_dir: str) -> bool:
+    """
+    Monitors file modifications relative to the receipt creation time.
+    Returns True if any file in invalidation.stale_if is newer than the receipt timestamp.
+    """
+    from chat_core import _evaluate_stale_conditions as core_eval
+    return core_eval(receipt_data, base_dir)
+
+
+def _resolve_active_receipt(receipt_data: dict, base_dir: str) -> dict:
+    """
+    Catches stale states, intercepts the payload, and dynamically mutates
+    both the status to 'blocked/stale' and the next_safe_action prompt.
+    """
+    from chat_core import _resolve_active_receipt as core_resolve
+    return core_resolve(receipt_data, base_dir)
+
+
 # ── Core tools ──────────────────────────────────────────────────────────────
 
 
