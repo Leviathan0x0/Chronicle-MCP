@@ -526,6 +526,42 @@ def _parse_part_file_name(file_name: str) -> tuple[str, int] | None:
     return None
 
 
+def _is_receipt_stale(file_path: str, creation_timestamp: float, base_dir: str) -> bool:
+    """
+    Checks if a handoff receipt is stale based on invalidation.stale_if.
+    If any target file in stale_if has a modification time newer than creation_timestamp,
+    returns True.
+    """
+    import os
+    import json
+    if not os.path.exists(file_path):
+        return False
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        stale_if = data.get("invalidation", {}).get("stale_if", [])
+        for target in stale_if:
+            fpath = target.get("file_path")
+            glob_pat = target.get("glob_pattern")
+            if fpath:
+                resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
+                if os.path.exists(resolved_fpath):
+                    mtime = os.path.getmtime(resolved_fpath)
+                    if mtime > creation_timestamp:
+                        return True
+            elif glob_pat:
+                import glob
+                resolved_glob = glob_pat if os.path.isabs(glob_pat) else os.path.join(base_dir, glob_pat)
+                for matched_path in glob.glob(resolved_glob, recursive=True):
+                    if os.path.exists(matched_path):
+                        mtime = os.path.getmtime(matched_path)
+                        if mtime > creation_timestamp:
+                            return True
+    except Exception:
+        pass
+    return False
+
+
 def _is_part_of_file(doc_key: str, file_name: str, client: str) -> bool:
     prefix = f"{client}/"
     if not doc_key.startswith(prefix):
@@ -970,6 +1006,13 @@ class ChatConnector:
 
                 half_life = 1.0 if is_receipt else 30.0
                 decayed_score = apply_temporal_decay(bm25_score, mtime, half_life_days=half_life)
+                if is_receipt:
+                    parsed = _parse_part_file_name(file_name)
+                    orig_file_name = parsed[0] if parsed else file_name
+                    chats_dir = self.resolve_chats_dir(client)
+                    receipt_file_path = os.path.join(chats_dir, orig_file_name)
+                    if _is_receipt_stale(receipt_file_path, mtime, self.base_dir):
+                        decayed_score = 0.0
                 scored_candidates.append((file_name, decayed_score))
 
             # Workspace Deduplication Gate for handoff receipts
@@ -1301,6 +1344,13 @@ class ChatConnector:
 
             half_life = 1.0 if is_receipt else 30.0
             decayed_score = apply_temporal_decay(bm25_score, mtime, half_life_days=half_life)
+            if is_receipt:
+                parsed = _parse_part_file_name(part_file)
+                orig_file_name = parsed[0] if parsed else part_file
+                chats_dir = self.resolve_chats_dir(client)
+                receipt_file_path = os.path.join(chats_dir, orig_file_name)
+                if _is_receipt_stale(receipt_file_path, mtime, self.base_dir):
+                    decayed_score = 0.0
             scored.append({
                 "file": part_file,
                 "score": round(decayed_score, 4)
@@ -1984,13 +2034,14 @@ class ChatConnector:
 
     def save_handoff_receipt(
         self,
-        promise: str,
-        scope: list[str],
-        touched_surfaces: list[dict],
+        obligations: dict,
+        work_state: dict,
         evidence: dict,
-        open_risks: list[str],
-        dependencies: list[str],
-        next_safe_action: str,
+        invalidation: dict,
+        status: str = "open",
+        supersedes: str | None = None,
+        closure: dict | None = None,
+        receipt_id: str | None = None,
         client: str = "default",
     ) -> str:
         import time
@@ -2002,38 +2053,61 @@ class ChatConnector:
         
         timestamp = int(time.time())
         workspace_hash = hashlib.md5(self.base_dir.encode("utf-8")).hexdigest()[:8]
+        if not receipt_id:
+            receipt_id = f"{workspace_hash}_{timestamp}"
+            
         file_name = f"handoff_{timestamp}_{workspace_hash}.json"
         file_path = os.path.join(chats_dir, file_name)
         
         touched_str = "\n".join(
             f"- {s.get('file_path', '')}: {s.get('summary', '')} ({s.get('why', '')})"
-            for s in touched_surfaces
+            for s in work_state.get('touched_surfaces', [])
         )
-        evidence_str = (
-            f"Checks Run: {', '.join(evidence.get('checks_run', []))}\n"
-            f"Results: {evidence.get('results', '')}\n"
-            f"Skipped Checks: {', '.join(evidence.get('skipped_checks', []))}"
+        checks_list = []
+        for c in evidence.get('checks_run', []):
+            checks_list.append(f"{c.get('command', '')} (exit: {c.get('exit_code', '')}): {c.get('stdout_summary', '')}")
+        checks_str = "\n".join(checks_list)
+        missing_evidence_str = ", ".join(evidence.get('missing_evidence', []))
+        dependencies_str = ", ".join(work_state.get('dependencies', []))
+        stale_if_str = ", ".join(
+            f"{s.get('file_path', s.get('glob_pattern', ''))}"
+            for s in invalidation.get('stale_if', [])
         )
         
+        closure_str = ""
+        if closure:
+            closure_str = (
+                f"\nClosure:\n"
+                f"- Closed By: {closure.get('closed_by', '')}\n"
+                f"- Closed At: {closure.get('closed_at', '')}\n"
+                f"- Closure Basis: {closure.get('closure_basis', '')}\n"
+                f"- Closure Evidence: {closure.get('closure_evidence', '')}\n"
+            )
+
         receipt_text = (
-            f"Handoff Receipt\n"
-            f"Promise: {promise}\n"
-            f"Scope: {', '.join(scope)}\n"
+            f"Handoff Receipt {receipt_id}\n"
+            f"Status: {status}\n"
+            f"Supersedes: {supersedes or 'None'}\n"
+            f"Promise: {obligations.get('promise', '')}\n"
+            f"Scope: {', '.join(obligations.get('scope', []))}\n"
             f"Touched Surfaces:\n{touched_str}\n"
-            f"Evidence:\n{evidence_str}\n"
-            f"Open Risks: {', '.join(open_risks)}\n"
-            f"Dependencies: {', '.join(dependencies)}\n"
-            f"Next Safe Action: {next_safe_action}"
+            f"Dependencies: {dependencies_str}\n"
+            f"Checks Run:\n{checks_str}\n"
+            f"Missing Evidence: {missing_evidence_str}\n"
+            f"Stale If: {stale_if_str}\n"
+            f"Next Safe Action: {invalidation.get('next_safe_action', '')}"
+            f"{closure_str}"
         )
         
         receipt_data = {
-            "promise": promise,
-            "scope": scope,
-            "touched_surfaces": touched_surfaces,
+            "receipt_id": receipt_id,
+            "supersedes": supersedes,
+            "status": status,
+            "obligations": obligations,
+            "work_state": work_state,
             "evidence": evidence,
-            "open_risks": open_risks,
-            "dependencies": dependencies,
-            "next_safe_action": next_safe_action,
+            "closure": closure or {},
+            "invalidation": invalidation,
             "timestamp": timestamp,
             "messages": [
                 {
@@ -2051,6 +2125,82 @@ class ChatConnector:
         self._sync_serialized_index(client)
         
         return f"Handoff receipt saved successfully to {file_name}"
+
+    def get_workspace_handoff_state(self, client: str = "default") -> dict:
+        import os
+        import json
+        import hashlib
+        
+        chats_dir = self.resolve_chats_dir(client)
+        if not os.path.exists(chats_dir):
+            return {"blocked": False, "reason": "No receipts directory.", "active_chain": []}
+            
+        workspace_hash = hashlib.md5(self.base_dir.encode("utf-8")).hexdigest()[:8]
+        
+        # Load all handoff receipt files for the current workspace
+        receipts = {}
+        for fname in os.listdir(chats_dir):
+            if fname.startswith("handoff_") and fname.endswith(".json"):
+                parts = fname.replace(".json", "").split("_")
+                if len(parts) >= 3 and parts[2] == workspace_hash:
+                    file_path = os.path.join(chats_dir, fname)
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            rid = data.get("receipt_id")
+                            if rid:
+                                receipts[rid] = {
+                                    "data": data,
+                                    "timestamp": data.get("timestamp", 0),
+                                    "file_name": fname
+                                }
+                    except Exception:
+                        pass
+                        
+        if not receipts:
+            return {"blocked": False, "reason": "No handoff receipts found.", "active_chain": []}
+            
+        sorted_receipts = sorted(receipts.values(), key=lambda x: x["timestamp"], reverse=True)
+        newest_receipt = sorted_receipts[0]
+        
+        active_chain = []
+        curr = newest_receipt["data"]
+        visited = set()
+        
+        blocked = False
+        blocked_by_receipt = None
+        
+        while curr:
+            curr_id = curr.get("receipt_id")
+            if not curr_id or curr_id in visited:
+                break
+            visited.add(curr_id)
+            active_chain.append(curr_id)
+            
+            closure = curr.get("closure") or {}
+            is_closed = (
+                curr.get("status") == "closed" and 
+                closure.get("closed_by") and 
+                closure.get("closed_at") and 
+                closure.get("closure_basis")
+            )
+            if not is_closed:
+                blocked = True
+                blocked_by_receipt = curr_id
+                
+            parent_id = curr.get("supersedes")
+            if parent_id and parent_id in receipts:
+                curr = receipts[parent_id]["data"]
+            else:
+                curr = None
+                
+        return {
+            "blocked": blocked,
+            "blocked_by_receipt": blocked_by_receipt,
+            "active_chain": active_chain,
+            "newest_receipt_id": newest_receipt["data"].get("receipt_id"),
+            "next_safe_action": newest_receipt["data"].get("invalidation", {}).get("next_safe_action") if blocked else None
+        }
 
 
 _default_connector = ChatConnector()

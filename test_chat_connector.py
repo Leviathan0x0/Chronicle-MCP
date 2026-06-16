@@ -573,13 +573,19 @@ class ChatConnectorTests(unittest.TestCase):
 
     def test_save_handoff_receipt(self):
         res = self.cc.save_handoff_receipt(
-            promise="Fix all the failing unit tests",
-            scope=["cli.py", "chat_core.py"],
-            touched_surfaces=[{"file_path": "chat_core.py", "summary": "Changed naming of parts", "why": "Fix test assertions"}],
-            evidence={"checks_run": ["pytest"], "results": "All passed", "skipped_checks": []},
-            open_risks=["None"],
-            dependencies=["twine"],
-            next_safe_action="Publish new version"
+            obligations={"promise": "Fix all the failing unit tests", "scope": ["cli.py", "chat_core.py"]},
+            work_state={
+                "touched_surfaces": [{"file_path": "chat_core.py", "summary": "Changed naming of parts", "why": "Fix test assertions"}],
+                "dependencies": ["twine"]
+            },
+            evidence={
+                "checks_run": [{"command": "pytest", "exit_code": 0, "stdout_summary": "All passed"}],
+                "missing_evidence": []
+            },
+            invalidation={
+                "stale_if": [],
+                "next_safe_action": "Publish new version"
+            }
         )
         self.assertIn("Handoff receipt saved successfully", res)
         
@@ -592,8 +598,8 @@ class ChatConnectorTests(unittest.TestCase):
         # Verify content
         with open(os.path.join(chats_dir, handoff_files[0]), "r", encoding="utf-8") as f:
             data = json.load(f)
-        self.assertEqual(data["promise"], "Fix all the failing unit tests")
-        self.assertEqual(data["next_safe_action"], "Publish new version")
+        self.assertEqual(data["obligations"]["promise"], "Fix all the failing unit tests")
+        self.assertEqual(data["invalidation"]["next_safe_action"], "Publish new version")
         
         # Re-index
         self.cc._sync_serialized_index("default")
@@ -610,7 +616,12 @@ class ChatConnectorTests(unittest.TestCase):
         old_receipt_path = os.path.join(self.cc.resolve_chats_dir("default"), "handoff_1700000000_abcd1234.json")
         with open(old_receipt_path, "w", encoding="utf-8") as f:
             json.dump({
-                "promise": "old receiptterm promise",
+                "receipt_id": "abcd1234_1700000000",
+                "status": "open",
+                "obligations": {"promise": "old receiptterm promise", "scope": []},
+                "work_state": {"touched_surfaces": [], "dependencies": []},
+                "evidence": {"checks_run": [], "missing_evidence": []},
+                "invalidation": {"stale_if": [], "next_safe_action": ""},
                 "messages": [{"role": "assistant", "text": "receiptterm", "timestamp": 1700000000}],
                 "timestamp": 1700000000
             }, f)
@@ -621,7 +632,12 @@ class ChatConnectorTests(unittest.TestCase):
         new_receipt_path = os.path.join(self.cc.resolve_chats_dir("default"), f"handoff_{now}_abcd1234.json")
         with open(new_receipt_path, "w", encoding="utf-8") as f:
             json.dump({
-                "promise": "new receiptterm promise",
+                "receipt_id": f"abcd1234_{now}",
+                "status": "open",
+                "obligations": {"promise": "new receiptterm promise", "scope": []},
+                "work_state": {"touched_surfaces": [], "dependencies": []},
+                "evidence": {"checks_run": [], "missing_evidence": []},
+                "invalidation": {"stale_if": [], "next_safe_action": ""},
                 "messages": [{"role": "assistant", "text": "receiptterm", "timestamp": now}],
                 "timestamp": now
             }, f)
@@ -633,6 +649,56 @@ class ChatConnectorTests(unittest.TestCase):
         hits = self.cc.search_history(query="receiptterm", method="keyword")
         self.assertTrue(any(f"handoff_{now}_abcd1234" in h for h in hits))
         self.assertFalse(any("handoff_1700000000_abcd1234" in h for h in hits))
+
+    def test_multi_agent_state_coherence_and_active_invalidation(self):
+        import time
+        import hashlib
+        now = int(time.time())
+        workspace_hash = hashlib.md5(self.cc.base_dir.encode("utf-8")).hexdigest()[:8]
+        
+        chats_dir = self.cc.resolve_chats_dir("default")
+        receipt_path = os.path.join(chats_dir, f"handoff_{now}_{workspace_hash}.json")
+        
+        pkg_json_path = os.path.join(self.cc.base_dir, "package.json")
+        with open(pkg_json_path, "w") as f:
+            f.write("{}")
+            
+        os.utime(pkg_json_path, (now - 100, now - 100))
+        
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "receipt_id": f"{workspace_hash}_{now}",
+                "supersedes": None,
+                "status": "open",
+                "obligations": {"promise": "Verify state coherence test", "scope": []},
+                "work_state": {"touched_surfaces": [], "dependencies": []},
+                "evidence": {
+                    "checks_run": [],
+                    "missing_evidence": ["npm run test"]
+                },
+                "closure": {},
+                "invalidation": {
+                    "stale_if": [{"file_path": "package.json"}],
+                    "next_safe_action": "Run npm run test"
+                },
+                "messages": [{"role": "assistant", "text": "Verify state coherence test", "timestamp": now}],
+                "timestamp": now
+            }, f)
+            
+        state = self.cc.get_workspace_handoff_state("default")
+        self.assertTrue(state["blocked"])
+        self.assertEqual(state["next_safe_action"], "Run npm run test")
+        
+        self.cc._sync_serialized_index("default")
+        hits = self.cc.search_history(query="coherence", method="keyword")
+        self.assertTrue(any(f"handoff_{now}_{workspace_hash}" in h for h in hits))
+        
+        os.utime(pkg_json_path, (now + 100, now + 100))
+        
+        sem_hits = self.cc.search_history(query="coherence", method="semantic")
+        receipt_hits = [h for h in sem_hits if f"handoff_{now}_{workspace_hash}" in h.get("file", "")]
+        for h in receipt_hits:
+            self.assertEqual(h["score"], 0.0)
 
 
 

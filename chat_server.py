@@ -160,26 +160,34 @@ def manage_session_state(
 
 @mcp.tool()
 def save_handoff_receipt(
-    promise: str,
-    scope: list[str],
-    touched_surfaces: list[dict],
+    obligations: dict,
+    work_state: dict,
     evidence: dict,
-    open_risks: list[str],
-    dependencies: list[str],
-    next_safe_action: str,
+    invalidation: dict,
+    status: str = "open",
+    supersedes: str | None = None,
+    closure: dict | None = None,
+    receipt_id: str | None = None,
     client: str = "default",
 ) -> str:
-    """Save a structured, continuation-biased handoff receipt detailing the unresolved promise, scope, touched surfaces, validation evidence, open risks, dependencies, and next safe action."""
+    """Save a structured, continuation-biased handoff receipt conforming to the strict state-machine DAG model."""
     return cc.save_handoff_receipt(
-        promise=promise,
-        scope=scope,
-        touched_surfaces=touched_surfaces,
+        obligations=obligations,
+        work_state=work_state,
         evidence=evidence,
-        open_risks=open_risks,
-        dependencies=dependencies,
-        next_safe_action=next_safe_action,
+        invalidation=invalidation,
+        status=status,
+        supersedes=supersedes,
+        closure=closure,
+        receipt_id=receipt_id,
         client=client
     )
+
+
+@mcp.tool()
+def get_handoff_status(client: str = "default") -> dict:
+    """Retrieve the current workspace handoff status, including active chain of receipts, blocked status, and any next safe action."""
+    return cc.get_workspace_handoff_state(client=client)
 
 
 @mcp.prompt()
