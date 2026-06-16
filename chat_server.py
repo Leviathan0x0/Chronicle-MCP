@@ -160,17 +160,23 @@ def manage_session_state(
 
 @mcp.tool()
 def save_handoff_receipt(
-    touched_files: list[str],
-    open_promises: list[str],
-    skipped_checks: list[str],
+    promise: str,
+    scope: list[str],
+    touched_surfaces: list[dict],
+    evidence: dict,
+    open_risks: list[str],
+    dependencies: list[str],
     next_safe_action: str,
     client: str = "default",
 ) -> str:
-    """Save a handoff receipt for the current run, detailing active state, open commitments, skipped checks, and the next safe action."""
+    """Save a structured, continuation-biased handoff receipt detailing the unresolved promise, scope, touched surfaces, validation evidence, open risks, dependencies, and next safe action."""
     return cc.save_handoff_receipt(
-        touched_files=touched_files,
-        open_promises=open_promises,
-        skipped_checks=skipped_checks,
+        promise=promise,
+        scope=scope,
+        touched_surfaces=touched_surfaces,
+        evidence=evidence,
+        open_risks=open_risks,
+        dependencies=dependencies,
         next_safe_action=next_safe_action,
         client=client
     )

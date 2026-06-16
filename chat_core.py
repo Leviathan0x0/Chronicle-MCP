@@ -912,6 +912,7 @@ class ChatConnector:
             index_data = self._sync_serialized_index(client)
             index_map = index_data.get("index", {})
             doc_lengths = index_data.get("doc_lengths", {})
+            timestamps = index_data.get("timestamps", {})
             client_docs = [d for d in doc_lengths if d.startswith(f"{client}/")]
             n_docs = len(client_docs)
 
@@ -950,9 +951,71 @@ class ChatConnector:
                     n_docs=n_docs
                 )
                 file_name = doc_key.split("/", 1)[1]
-                scored_candidates.append((file_name, bm25_score))
+                
+                is_receipt = "handoff_" in file_name or "handoff_receipt" in file_name
+                mtime = 0.0
+                if is_receipt:
+                    parts = file_name.replace(".json", "").split("_")
+                    for p in parts:
+                        if p.isdigit() and len(p) >= 9:
+                            mtime = float(p)
+                            break
+                if mtime == 0.0:
+                    parsed = _parse_part_file_name(file_name)
+                    if parsed:
+                        orig_file_name, _ = parsed
+                        mtime = timestamps.get(f"{client}/{orig_file_name}", 0.0)
+                    else:
+                        mtime = timestamps.get(doc_key, 0.0)
 
-            scored_candidates.sort(key=lambda x: (0 if "handoff_receipt" in x[0] else 1, -x[1], x[0]))
+                half_life = 1.0 if is_receipt else 30.0
+                decayed_score = apply_temporal_decay(bm25_score, mtime, half_life_days=half_life)
+                scored_candidates.append((file_name, decayed_score))
+
+            # Workspace Deduplication Gate for handoff receipts
+            handoff_groups = {}  # {workspace_hash: (index, timestamp)}
+            for idx, item in enumerate(scored_candidates):
+                f_name = item[0]
+                if "handoff_" in f_name:
+                    parts = f_name.replace(".json", "").split("_")
+                    w_hash = "unknown"
+                    ts = 0
+                    if len(parts) >= 3 and parts[1].isdigit():
+                        ts = int(parts[1])
+                        w_hash = parts[2]
+                    elif len(parts) >= 3 and parts[2].isdigit():
+                        ts = int(parts[2])
+                        w_hash = "legacy"
+                    elif len(parts) >= 2 and parts[1].isdigit():
+                        ts = int(parts[1])
+                        w_hash = "legacy"
+                    
+                    if w_hash not in handoff_groups or ts > handoff_groups[w_hash][1]:
+                        handoff_groups[w_hash] = (idx, ts)
+
+            excluded_indices = set()
+            for idx, item in enumerate(scored_candidates):
+                f_name = item[0]
+                if "handoff_" in f_name:
+                    parts = f_name.replace(".json", "").split("_")
+                    w_hash = "unknown"
+                    ts = 0
+                    if len(parts) >= 3 and parts[1].isdigit():
+                        ts = int(parts[1])
+                        w_hash = parts[2]
+                    elif len(parts) >= 3 and parts[2].isdigit():
+                        ts = int(parts[2])
+                        w_hash = "legacy"
+                    elif len(parts) >= 2 and parts[1].isdigit():
+                        ts = int(parts[1])
+                        w_hash = "legacy"
+                    
+                    if w_hash in handoff_groups and handoff_groups[w_hash][0] != idx:
+                        excluded_indices.add(idx)
+
+            scored_candidates = [item for idx, item in enumerate(scored_candidates) if idx not in excluded_indices]
+
+            scored_candidates.sort(key=lambda x: (0 if ("handoff_" in x[0] or "handoff_receipt" in x[0]) else 1, -x[1], x[0]))
             results = [item[0] for item in scored_candidates]
             if len(results) > limit:
                 return results[:limit] + [
@@ -1219,20 +1282,74 @@ class ChatConnector:
             )
 
             part_file = doc_key.split("/", 1)[1]
-            parsed = _parse_part_file_name(part_file)
-            if parsed:
-                orig_file_name, _ = parsed
-                mtime = timestamps.get(f"{client}/{orig_file_name}", 0.0)
-            else:
-                mtime = timestamps.get(doc_key, 0.0)
+            is_receipt = "handoff_" in part_file or "handoff_receipt" in part_file
+            
+            mtime = 0.0
+            if is_receipt:
+                parts = part_file.replace(".json", "").split("_")
+                for p in parts:
+                    if p.isdigit() and len(p) >= 9:
+                        mtime = float(p)
+                        break
+            if mtime == 0.0:
+                parsed = _parse_part_file_name(part_file)
+                if parsed:
+                    orig_file_name, _ = parsed
+                    mtime = timestamps.get(f"{client}/{orig_file_name}", 0.0)
+                else:
+                    mtime = timestamps.get(doc_key, 0.0)
 
-            decayed_score = apply_temporal_decay(bm25_score, mtime)
+            half_life = 1.0 if is_receipt else 30.0
+            decayed_score = apply_temporal_decay(bm25_score, mtime, half_life_days=half_life)
             scored.append({
                 "file": part_file,
                 "score": round(decayed_score, 4)
             })
 
-        scored.sort(key=lambda x: (1 if "handoff_receipt" in x["file"] else 0, x["score"]), reverse=True)
+        # Workspace Deduplication Gate for handoff receipts
+        handoff_groups = {}  # {workspace_hash: (index, timestamp)}
+        for idx, item in enumerate(scored):
+            part_file = item["file"]
+            if "handoff_" in part_file:
+                parts = part_file.replace(".json", "").split("_")
+                w_hash = "unknown"
+                ts = 0
+                if len(parts) >= 3 and parts[1].isdigit():
+                    ts = int(parts[1])
+                    w_hash = parts[2]
+                elif len(parts) >= 3 and parts[2].isdigit():
+                    ts = int(parts[2])
+                    w_hash = "legacy"
+                elif len(parts) >= 2 and parts[1].isdigit():
+                    ts = int(parts[1])
+                    w_hash = "legacy"
+                
+                if w_hash not in handoff_groups or ts > handoff_groups[w_hash][1]:
+                    handoff_groups[w_hash] = (idx, ts)
+
+        excluded_indices = set()
+        for idx, item in enumerate(scored):
+            part_file = item["file"]
+            if "handoff_" in part_file:
+                parts = part_file.replace(".json", "").split("_")
+                w_hash = "unknown"
+                ts = 0
+                if len(parts) >= 3 and parts[1].isdigit():
+                    ts = int(parts[1])
+                    w_hash = parts[2]
+                elif len(parts) >= 3 and parts[2].isdigit():
+                    ts = int(parts[2])
+                    w_hash = "legacy"
+                elif len(parts) >= 2 and parts[1].isdigit():
+                    ts = int(parts[1])
+                    w_hash = "legacy"
+                
+                if w_hash in handoff_groups and handoff_groups[w_hash][0] != idx:
+                    excluded_indices.add(idx)
+
+        scored = [item for idx, item in enumerate(scored) if idx not in excluded_indices]
+
+        scored.sort(key=lambda x: (1 if ("handoff_" in x["file"] or "handoff_receipt" in x["file"]) else 0, x["score"]), reverse=True)
         return scored[:top_k]
 
     def get_chat_summary(self, file_name: str, client: str = "default") -> str:
@@ -1867,38 +1984,61 @@ class ChatConnector:
 
     def save_handoff_receipt(
         self,
-        touched_files: list[str],
-        open_promises: list[str],
-        skipped_checks: list[str],
+        promise: str,
+        scope: list[str],
+        touched_surfaces: list[dict],
+        evidence: dict,
+        open_risks: list[str],
+        dependencies: list[str],
         next_safe_action: str,
         client: str = "default",
     ) -> str:
         import time
         import json
+        import hashlib
         
         chats_dir = self.resolve_chats_dir(client)
         os.makedirs(chats_dir, exist_ok=True)
         
         timestamp = int(time.time())
-        file_name = f"handoff_receipt_{timestamp}.json"
+        workspace_hash = hashlib.md5(self.base_dir.encode("utf-8")).hexdigest()[:8]
+        file_name = f"handoff_{timestamp}_{workspace_hash}.json"
         file_path = os.path.join(chats_dir, file_name)
         
+        touched_str = "\n".join(
+            f"- {s.get('file_path', '')}: {s.get('summary', '')} ({s.get('why', '')})"
+            for s in touched_surfaces
+        )
+        evidence_str = (
+            f"Checks Run: {', '.join(evidence.get('checks_run', []))}\n"
+            f"Results: {evidence.get('results', '')}\n"
+            f"Skipped Checks: {', '.join(evidence.get('skipped_checks', []))}"
+        )
+        
+        receipt_text = (
+            f"Handoff Receipt\n"
+            f"Promise: {promise}\n"
+            f"Scope: {', '.join(scope)}\n"
+            f"Touched Surfaces:\n{touched_str}\n"
+            f"Evidence:\n{evidence_str}\n"
+            f"Open Risks: {', '.join(open_risks)}\n"
+            f"Dependencies: {', '.join(dependencies)}\n"
+            f"Next Safe Action: {next_safe_action}"
+        )
+        
         receipt_data = {
-            "touched_files": touched_files,
-            "open_promises": open_promises,
-            "skipped_checks": skipped_checks,
+            "promise": promise,
+            "scope": scope,
+            "touched_surfaces": touched_surfaces,
+            "evidence": evidence,
+            "open_risks": open_risks,
+            "dependencies": dependencies,
             "next_safe_action": next_safe_action,
             "timestamp": timestamp,
             "messages": [
                 {
                     "role": "assistant",
-                    "text": (
-                        f"Handoff Receipt\n"
-                        f"Touched Files: {', '.join(touched_files)}\n"
-                        f"Open Promises: {', '.join(open_promises)}\n"
-                        f"Skipped Checks: {', '.join(skipped_checks)}\n"
-                        f"Next Safe Action: {next_safe_action}"
-                    ),
+                    "text": receipt_text,
                     "timestamp": timestamp
                 }
             ]

@@ -571,6 +571,70 @@ class ChatConnectorTests(unittest.TestCase):
             
             self.assertEqual(custom_input, "myides")
 
+    def test_save_handoff_receipt(self):
+        res = self.cc.save_handoff_receipt(
+            promise="Fix all the failing unit tests",
+            scope=["cli.py", "chat_core.py"],
+            touched_surfaces=[{"file_path": "chat_core.py", "summary": "Changed naming of parts", "why": "Fix test assertions"}],
+            evidence={"checks_run": ["pytest"], "results": "All passed", "skipped_checks": []},
+            open_risks=["None"],
+            dependencies=["twine"],
+            next_safe_action="Publish new version"
+        )
+        self.assertIn("Handoff receipt saved successfully", res)
+        
+        # Verify it exists in storage folder
+        chats_dir = self.cc.resolve_chats_dir("default")
+        files = os.listdir(chats_dir)
+        handoff_files = [f for f in files if f.startswith("handoff_") and f.endswith(".json")]
+        self.assertEqual(len(handoff_files), 1)
+        
+        # Verify content
+        with open(os.path.join(chats_dir, handoff_files[0]), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["promise"], "Fix all the failing unit tests")
+        self.assertEqual(data["next_safe_action"], "Publish new version")
+        
+        # Re-index
+        self.cc._sync_serialized_index("default")
+        
+        # Search it
+        hits = self.cc.search_history(query="failing unit tests", method="keyword")
+        self.assertTrue(any("handoff_" in h for h in hits))
+
+    def test_handoff_receipt_decay_and_deduplication(self):
+        # Create standard chat (Doc 1) with specific keyword
+        self._write_chat("standard_decay.json", [{"role": "user", "content": "receiptterm decay testing"}])
+        # Create handoff receipts from the same workspace (Doc 2 and Doc 3)
+        # Doc 2 is older (timestamp 1700000000)
+        old_receipt_path = os.path.join(self.cc.resolve_chats_dir("default"), "handoff_1700000000_abcd1234.json")
+        with open(old_receipt_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "promise": "old receiptterm promise",
+                "messages": [{"role": "assistant", "text": "receiptterm", "timestamp": 1700000000}],
+                "timestamp": 1700000000
+            }, f)
+            
+        # Doc 3 is newer (current time)
+        import time
+        now = int(time.time())
+        new_receipt_path = os.path.join(self.cc.resolve_chats_dir("default"), f"handoff_{now}_abcd1234.json")
+        with open(new_receipt_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "promise": "new receiptterm promise",
+                "messages": [{"role": "assistant", "text": "receiptterm", "timestamp": now}],
+                "timestamp": now
+            }, f)
+            
+        self.cc._sync_serialized_index("default")
+        
+        # 1. Verify Workspace Deduplication Gate:
+        # Searching for 'receiptterm' should return 'handoff_<now>_abcd1234' but NOT 'handoff_1700000000_abcd1234'
+        hits = self.cc.search_history(query="receiptterm", method="keyword")
+        self.assertTrue(any(f"handoff_{now}_abcd1234" in h for h in hits))
+        self.assertFalse(any("handoff_1700000000_abcd1234" in h for h in hits))
+
+
 
 if __name__ == "__main__":
     unittest.main()
