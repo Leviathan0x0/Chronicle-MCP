@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="#key-architectural-capabilities">Why</a> ·
-  <a href="#command-line-interface-mechanics">CLI Mechanics</a> 
+  <a href="#command-line-interface-mechanics">CLI Mechanics</a> ·
   <a href="#interactive-setup-wizard">Setup Wizard</a> ·
   <a href="#tool-reference-catalog">Tool Catalog</a> ·
   <a href="#installation-and-configuration">Installation</a> ·
