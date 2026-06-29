@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: chronicle-mcp-server
-Version: 1.1.8
+Version: 1.5.4
 Summary: Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.
 Author: Leviathan
 License: MIT
@@ -20,26 +20,27 @@ Dynamic: license-file
 </p>
 
 <p align="center">
-  <a href="https://github.com/Leviathan0x0/Chronicle-MCP"><img src="https://img.shields.io/github/stars/Leviathan0x0/Chronicle-MCP.svg?style=flat-square" alt="GitHub Stars" /></a>
-  
-  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/v/chronicle-mcp-server.svg?style=flat-square" alt="PyPI Version" /></a>
-  
-  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/dm/chronicle-mcp-server.svg?style=flat-square" alt="PyPI Downloads" /></a>
-  
+  <a href="https://github.com/Leviathan0x0/Chronicle-MCP"><img src="https://img.shields.io/github/stars/Leviathan0x0/Chronicle-MCP?style=flat-square" alt="GitHub Stars" /></a>
+  ‎ 
+  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/v/chronicle-mcp-server?style=flat-square" alt="PyPI Version" /></a>
+  ‎ 
+  <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/dm/chronicle-mcp-server?style=flat-square&label=installs" alt="PyPI Downloads" /></a>
+  ‎ 
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT" /></a>
-  
+  ‎ 
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square" alt="Python Support" /></a>
 </p>
 
 <p align="center">
   <a href="#key-architectural-capabilities">Why</a> ·
   <a href="#command-line-interface-mechanics">CLI Mechanics</a> ·
+  <a href="#interactive-setup-wizard">Setup Wizard</a> ·
   <a href="#tool-reference-catalog">Tool Catalog</a> ·
   <a href="#installation-and-configuration">Installation</a> ·
   <a href="#automatic-session-saving-in-cursor-and-vs-code">Auto-Save</a> ·
   <a href="#running-verification-and-tests">Tests</a> ·
   <a href="#market-comparison-matrix">Comparison</a> ·
-  <a href="#public-roadmap">Roadmap</a> ·
+  <a href="#frequently-asked-questions-faq">FAQ</a> ·
   <a href="#license">License</a>
 </p>
 
@@ -65,27 +66,151 @@ To verify these savings, we executed multi-turn conversation benchmarks. The gra
 
 By condensing repetitive syntax and large raw code snippets, Chronicle achieves up to 40 percent token savings, directly lowering API usage costs and preventing context-window exhaustion.
 
+### Hybrid Splitting & BM25 Scoring Search Engine
+To make workspace searches extremely sharp and retrieve context-aware answers, Chronicle incorporates a state-of-the-art retrieval pipeline:
+* **Hybrid Document Splitting**: Slices long conversations into logical parts at indexing time. Splits are triggered temporally if a gap of more than 1800 seconds (30 minutes) occurs between consecutive messages, or lexically if the Jaccard similarity of vocabulary sliding groups of 4 messages drops below 0.12. Each split is stored and queried as a virtual document (`filename__chunk_idx`).
+* **Okapi BM25 Scorer**: Replaces naive keyword matching and raw TF-IDF with Okapi BM25 scoring (`k1 = 1.5` and `b = 0.85`). The parameter `b = 0.85` enforces an aggressive length penalty, which ensures long, rambling chat logs do not overshadow short, precise bug fixes.
+* **Handoff Receipts Prioritization**: Integrates a direct tool to save compact agent state files documenting modified paths, commitments, skipped tests, and next actions. Active handoff receipts are automatically prioritized and bubbled to the very top of search results.
+
 ---
 
 ## Command Line Interface Mechanics
 
-The `cli.py` file serves as the system's entry point, registering a unified `chronicle` command on the system path via the `pyproject.toml` configuration (`chronicle = "cli:main"`). The CLI contains several advanced capabilities designed for platform compatibility and developer ergonomics:
+The `cli.py` file serves as the system's entry point, registering a unified `chronicle` command on the system path via the `pyproject.toml` configuration (`chronicle = "cli:main"`).
 
-### 1. Unified Chronicle Global Command
-When run without subcommands, the `chronicle` command launches the stdio transport server for MCP clients:
+### 1. Interactive Setup Wizard
+Chronicle features an interactive, zero-dependency TTY setup wizard. Running `chronicle setup` or executing `chronicle` without arguments in an interactive terminal starts the setup flow:
+
+> [!TIP]
+> The setup wizard is styled with a premium purple theme, supporting arrow-key navigation, spacebar toggles, inline input editing, and real-time path validation!
+
+<u><h4>Keyboard Navigation & Controls</h4></u>
+
+Use the following controls when interacting with the select menu:
+
+| Command / Action | Key Control | Description |
+| :--- | :--- | :--- |
+| **Move Highlight** | `▲` Up / `▼` Down Arrow Keys | Navigates the interactive list focus |
+| **Toggle Checkbox** | `Spacebar` | Selects or deselects the highlighted app |
+| **Enter Custom IDE** | Navigate to *Other* & type | Type custom app directory directly inline |
+| **Erase Character** | `Backspace` | Removes characters inside the custom entry |
+| **Confirm & Inject** | `Enter` | Validates target existence and runs config injection |
+| **Cancel Setup** | `Ctrl + C` or `Escape` | Aborts setup process cleanly |
+
+<u><h4>Wizard Phases & Actions</h4></u>
+
+The wizard guides you through the following phases:
+
+| Step | Phase Name | What You Do | Result & Behavior |
+| :--- | :--- | :--- | :--- |
+| **Step 1** | Monolithic Split Engine | Input JSON file path (or press `Enter` to skip) | Automatically partitions unified chat history exports |
+| **Step 2** | Storage Directory Configuration | Specify directory path (or press `Enter` for default) | Creates local storage folder for transcripts |
+| **Step 3** | Interactive IDE Selection | Toggle checkboxes, navigate submenus, type custom targets | Performs TTY selection and checks path validation |
+| **Step 4** | Config Injection & Live Dashboard | Review final summary configuration | Injects server configs into target IDE settings |
+
+---
+
+> [!IMPORTANT]
+> **HOW TO USE THE WIZARD — A STEP-BY-STEP SHOWCASE GUIDE**
+>
+> 1. **Start the Process**: Launch the wizard with `chronicle setup` in your terminal.
+> 2. **Split Monolithic Files**: Paste the path to your exported `conversations.json` (from ChatGPT or Claude). This splits them into clean individual threads inside your chats folder.
+> 3. **Define Your Chats Directory**: Keep the default `~/universal-chats` folder or type a custom path.
+> 4. **Select Your Target IDEs**:
+>    * Press `Down Arrow` to scroll down to VS Code, Trae, etc.
+>    * Press `Space` to toggle selections.
+>    * If you select Antigravity, checking it will automatically expand sub-choices (Antigravity IDE, Antigravity 2.0, Antigravity CLI) right underneath!
+>    * Scroll down to **Other (Enter custom entry)** and type any system-specific folder name to add emerging editors.
+>    * **Real-time Path Validation**: If the custom configuration path parent doesn't exist, a warning alerts you at the bottom: `⚠ App/IDE "<name>" was not found on your system.`. Erase it with `Backspace` or type a valid path to proceed.
+> 5. **Complete and Launch**: Press `Enter` to write the JSON configuration file for all selected apps. The Live Environment Dashboard will display a complete summary of your workspace configs.
+
+<details>
+<summary><b>Click to expand step-by-step Setup Walkthrough</b></summary>
+
+#### Step 1: Launch the Setup Wizard
+Run the setup command:
 ```bash
-chronicle
+chronicle setup
 ```
+
+#### Step 2: The Monolithic Split Engine
+The wizard asks if you want to partition any monolithic chat logs (such as the single `conversations.json` from ChatGPT/Claude exports) into separate files in your new storage folder:
+```text
+── Chronicle Archive Setup ─────────────────────────────────────
+Do you want to split a single conversations.json file?
+Enter path to export file (or press ENTER to skip): 
+```
+
+#### Step 3: Configure Storage Path
+Define the folder path where Chronicle will clean and store all conversation history:
+```text
+Enter path to folder containing your conversations [Default: ~/universal-chats]: 
+✓ Using existing storage directory: /Users/username/universal-chats
+Successfully set chats directory to: /Users/username/universal-chats
+```
+
+#### Step 4: Interactive IDE Selector
+An interactive selection menu with a premium purple theme. Navigate with the arrow keys, toggle checkboxes with the `Spacebar`, edit custom inputs inline, and press `Enter` to confirm:
+```text
+Please select the applications/IDEs where you want to install Chronicle MCP:
+  (Use arrow keys to navigate, Space to toggle, Enter to confirm)
+    [✓] Cursor
+    [ ] VS Code (Cline / Roo Code)
+    [ ] Trae IDE
+    [ ] Claude Code
+    [ ] Windsurf
+    [ ] Claude Desktop
+    [ ] ChatGPT Desktop
+❯   [✓] Antigravity
+        [✓] Antigravity IDE
+        [ ] Antigravity 2.0
+        [ ] Antigravity CLI
+    Other (Enter custom entry): 
+```
+
+> [!NOTE]
+> If you enter a custom app/IDE name under "Other" that does not exist on your system, the wizard's built-in path validation checker will instantly display a warning at the bottom:
+> `⚠ App/IDE "mycustomide" was not found on your system.`
+
+#### Step 5: Inject Configs & Live Environment Dashboard
+Once selections are confirmed, Chronicle automatically resolves `uvx` paths on your system, writes the MCP server configuration into each selected app, and presents a live environment dashboard summary:
+```text
+── Chronicle Environment Live ──────────────────────────────────
+ ✓ Storage Folder : /Users/username/universal-chats
+ ✓ Auto-Saved Configs for: [Cursor, Antigravity IDE]
+
+  How to run the server manually:
+  $ uvx --from chronicle-mcp-server chronicle
+
+  recalled in <1ms · 100% local · zero cloud
+────────────────────────────────────────────────────────────────
+```
+</details>
+
+### 2. Unified Chronicle Global Command
+When run without subcommands, the `chronicle` command behaves contextually:
+* **Interactive TTY Terminal**: Launches the interactive setup wizard.
+* **Non-TTY/Subprocesses**: Launches the stdio transport server for MCP clients.
+
 It accepts options like `--chats-folder` to configure custom storage directories, and exposes the subcommands `add` and `split`.
 
-### 2. Cross-Platform Path Resolution Rules
+### 3. Cross-Platform Path Resolution Rules
 The CLI implements path resolution logic using Python's `sys.platform` and `pathlib.Path` to match standard OS conventions for user directories:
+
+<details>
+<summary><b>Click to expand OS Path specifications</b></summary>
+
 * **macOS (Darwin)**: Resolves configurations to the user's home Library folder, typically under `~/Library/Application Support/`.
 * **Windows (Win32)**: Leverages the `%APPDATA%` environment variable, falling back to `~/AppData/Roaming/` if the variable is not set.
 * **Linux**: Follows the XDG base directory specification, resolving to `~/.config/`.
+</details>
 
-### 3. Native IDE Integration and Fallback Engine
+### 4. Native IDE Integration and Fallback Engine
 The CLI wrapper provides out-of-the-box support for leading AI-assisted development tools and editors:
+
+<details>
+<summary><b>Click to expand supported environments and fallback logic</b></summary>
+
 * **Cursor**: Reads and writes configurations to `~/.cursor/mcp.json`.
 * **Claude Code**: Integrates with `~/.claude.json`.
 * **VS Code (Cline/RooCode/Continue)**: Standardizes pathing across platforms:
@@ -97,14 +222,24 @@ The CLI wrapper provides out-of-the-box support for leading AI-assisted developm
   * Windows: `%APPDATA%/Trae/mcp.json`
   * Linux: `~/.config/Trae/mcp.json`
 * **Dynamic Fallback Engine**: For emerging platforms (such as Kiro, MiniMax, Qwen Code, Grok Build, or Antigravity), the CLI employs a fallback search pattern. It first checks for a user home dot-directory configuration (such as `~/.<app_name>/mcp.json`). If that directory is missing, it creates the app-specific configuration in the standard application support folder for the respective platform (e.g. `~/Library/Application Support/<app_name>/mcp.json` on macOS).
+</details>
 
-### 4. Prevent ENOENT Errors with shutil.which
-Host clients (like Claude Desktop or Cline) spawn MCP servers within isolated subprocesses that often do not inherit the user's login shell environment variables (such as custom paths defined in `.bashrc` or `.zshrc`). Attempting to call `uvx` or global scripts directly can raise an `ENOENT` connection error if the host application cannot find the executable.
+### 5. Prevent ENOENT Errors with shutil.which
+Host clients (like Claude Desktop or Cline) spawn MCP servers within isolated subprocesses that often do not inherit the user's login shell environment variables (such as custom paths defined in `.bashrc` or `.zshrc`).
+
+<details>
+<summary><b>Click to expand details</b></summary>
+
 To solve this, the `chronicle add` utility uses Python's `shutil.which("uvx")` to scan the host machine path during configuration. It resolves the absolute system path of `uvx` (such as `/opt/homebrew/bin/uvx` or `/usr/local/bin/uvx`) and writes this absolute path directly to the IDE's JSON configuration file.
+</details>
 
-### 5. Structural Split Engine Subcommand
+### 6. Structural Split Engine Subcommand
 Users downloading conversational archives from ChatGPT or Claude are often provided with a single monolithic JSON file (such as `conversations.json`) containing hundreds of distinct threads.
 The `chronicle split` subcommand parses these large payloads and splits them into individual JSON files:
+
+<details>
+<summary><b>Click to expand split options and execution</b></summary>
+
 * Automatically detects the schema format (nested conversation trees or flat lists).
 * Identifies thread titles using key fallback fields (checking `title`, `name`, and `chat_title`).
 * Sanitizes file names to remove platform-forbidden characters (such as `/`, `\`, `*`, `?`, `:`, `"`, `<`, `>`, and `|`) and limits length.
@@ -113,8 +248,9 @@ The `chronicle split` subcommand parses these large payloads and splits them int
 ```bash
 chronicle split /path/to/conversations.json --out /path/to/output_directory
 ```
+</details>
 
-### 6. Global Chats Folder Configuration
+### 7. Global Chats Folder Configuration
 By default, Chronicle stores processed archives in `~/.chronicle/chats`. You can configure a custom global storage folder using the `--chats-folder` parameter:
 ```bash
 chronicle --chats-folder /path/to/custom/chats
@@ -128,11 +264,11 @@ This saves the target path to a local settings file (`~/.chronicle_settings.json
 Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set.
 
 ### 1. `search_history`
-* **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, TF-IDF semantic, date range, and related chat lookups.
+* **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, Okapi BM25 semantic, date range, and related chat lookups.
 * **Parameters**:
   * `query` (str, default: ""): The search query string or keywords list.
   * `method` (str, default: "semantic"): Search methodology. Supported options:
-    * `semantic`: Standard semantic retrieval using TF-IDF cosine similarity.
+    * `semantic`: Standard semantic retrieval using Okapi BM25 scoring with exponential temporal decay.
     * `keyword`: Exact string matching against terms in files.
     * `date_range`: Filters files modified within a date interval (requires `start_date` and `end_date`).
     * `related`: Finds archives semantically close to a reference file.
@@ -223,7 +359,23 @@ Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This
   * `new_messages` (list of dicts, optional): Message list to merge.
   * `client` (str, default: "default"): Subfolder client identifier.
 
+### 7. `save_handoff_receipt`
+* **Description**: Saves a handoff receipt for the current execution to document the active state (touched files, open promises, skipped checks, next safe actions). Saved receipts are indexed and automatically bubbled to the very top of search results.
+* **Parameters**:
+  * `touched_files` (list of strings): Paths to files modified during the run.
+  * `open_promises` (list of strings): List of unresolved commitments or tasks left open.
+  * `skipped_checks` (list of strings): List of tests or validation tasks skipped.
+  * `next_safe_action` (str): A clear, direct prompt instructing the next agent on exactly what to do next.
+  * `client` (str, default: "default"): Subfolder client identifier.
+
 ## Installation and Configuration
+
+### Quick Setup (Recommended)
+Install the package directly from PyPI and run the interactive setup wizard to configure your storage paths and editor integrations automatically:
+```bash
+pip install chronicle-mcp-server
+chronicle setup
+```
 
 ### System Prerequisites
 * Python 3.10 or higher.
@@ -245,46 +397,6 @@ Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This
    ```bash
    pip install -e .
    ```
-
-### Quick Editor Integration
-You can automatically add Chronicle-MCP to your preferred IDE configuration using the `add` subcommand. This utility resolves the absolute path of `uvx` dynamically to guarantee error-free connections:
-
-* **Cursor**:
-  ```bash
-  chronicle add cursor
-  ```
-* **Claude Code**:
-  ```bash
-  chronicle add claude
-  ```
-* **VS Code (Cline / RooCode)**:
-  ```bash
-  chronicle add vscode
-  ```
-* **Trae**:
-  ```bash
-  chronicle add trae
-  ```
-* **Custom / Emerging IDEs**:
-  ```bash
-  chronicle add <editor-name>
-  ```
-
-Alternatively, you can configure the editor manually to execute the following startup command:
-```json
-{
-  "mcpServers": {
-    "chronicle-mcp": {
-      "command": "/absolute/path/to/uvx",
-      "args": [
-        "--from",
-        "chronicle-mcp-server",
-        "chronicle"
-      ]
-    }
-  }
-}
-```
 
 ---
 
@@ -360,6 +472,36 @@ Planned future features and enhancements for Chronicle:
 * **Database Auditing**: Automatic cache cleanups and data integrity audits for historical logs.
 * **Dynamic Tailoring**: Specific prompt formats optimized for different LLM host architectures (Claude, GPT, Gemini).
 * **Extended IDE Support**: Out-of-the-box config injection scripts for additional emerging developer environments.
+
+---
+
+## Frequently Asked Questions (FAQ)
+
+<u><h3>General & Setup Inquiries</h3></u>
+
+---
+
+> **Q: What is the benefit of the new Interactive Setup Wizard?**
+>
+> **A:** It completely automates the configuration process. In less than 10 seconds, it configures your storage directory, partitions raw monolithic conversation logs, checks system environments, validates custom paths, and injects configurations into all target applications.
+
+---
+
+> **Q: Why does the setup wizard use a purple theme?**
+>
+> **A:** Chronicle is designed to feel premium and state of the art. The setup wizard uses a vibrant, highly readable purple/magenta theme (`\033[1;35m`) with custom cursor pointers (`❯`) and status checks (`[✓]`) for an optimized terminal experience.
+
+---
+
+> **Q: What happens if a custom app directory is not found on my system?**
+>
+> **A:** The interactive selector prevents invalid configurations. If you type a custom name under "Other" whose configuration directory cannot be resolved, an alert appears inline at the bottom: `⚠ App/IDE "<name>" was not found on your system.`. You can easily backspace and edit the input without losing other selections.
+
+---
+
+> **Q: How does the Automatic Session Saving work?**
+>
+> **A:** Chronicle generates workspace rule files (e.g. `.cursorrules`, `.clinerules`) instructing your AI agent to register the session at startup. On tab or editor shutdown, the server's process exit hooks trigger an automatic flush to write the transcripts to your storage folder.
 
 ---
 

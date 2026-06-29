@@ -700,6 +700,25 @@ class ChatConnectorTests(unittest.TestCase):
         for h in receipt_hits:
             self.assertEqual(h["score"], 0.0)
 
+    def test_cli_custom_discovery_and_paths(self):
+        import cli
+        # Verify find_executable_or_app detects standard system commands like python / python3 / bash / sh / cmd
+        self.assertTrue(cli.find_executable_or_app("sh") or cli.find_executable_or_app("cmd") or cli.find_executable_or_app("python3") or cli.find_executable_or_app("bash"))
+        # Verify fake app does not exist
+        self.assertFalse(cli.find_executable_or_app("nonexistent_fake_app_xyz"))
+        
+        # Verify get_config_paths returns multiple paths for vscode / codex
+        vscode_paths = cli.get_config_paths("vscode")
+        self.assertGreater(len(vscode_paths), 1)
+        self.assertTrue(any("cline_mcp_settings.json" in str(p) for p in vscode_paths))
+
+        # Verify Windsurf config path resolves to codeium/windsurf/mcp_config.json
+        windsurf_paths = cli.get_config_paths("windsurf")
+        self.assertTrue(any(".codeium" in str(p) and "mcp_config.json" in str(p) for p in windsurf_paths))
+
+        # Verify Trae config path resolves to .trae/mcp.json
+        trae_paths = cli.get_config_paths("trae")
+        self.assertTrue(any(".trae" in str(p) and "mcp.json" in str(p) for p in trae_paths))
 
 
 if __name__ == "__main__":

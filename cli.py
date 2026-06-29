@@ -23,91 +23,159 @@ if SETTINGS_FILE_PATH.exists():
     except Exception:
         pass
 
-def get_config_path(app_name):
-    """Calculates the exact, absolute configuration file path based on the operating system."""
+def find_executable_or_app(app_name):
+    """Checks if the application's executable or application package exists on the system."""
+    home = Path.home()
+    system = sys.platform
+    
+    # Check if direct name exists on PATH
+    if shutil.which(app_name):
+        return True
+        
+    # Check common suffix/variations on PATH
+    for suffix in ["", ".exe", ".cmd", ".bat"]:
+        if shutil.which(app_name + suffix):
+            return True
+        if shutil.which(app_name.lower() + suffix):
+            return True
+            
+    if system == "darwin":
+        # Check standard macOS Applications folder
+        app_dirs = [Path("/Applications"), home / "Applications"]
+        for app_dir in app_dirs:
+            if app_dir.exists():
+                for name in [app_name, app_name.title(), app_name.upper(), app_name.lower()]:
+                    if (app_dir / f"{name}.app").exists():
+                        return True
+    elif system == "win32":
+        # Check common Windows program directories
+        program_files = [
+            Path(os.environ.get("ProgramFiles", "C:\\Program Files")),
+            Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")),
+            Path(os.environ.get("LocalAppData", home / "AppData\\Local"))
+        ]
+        for pf in program_files:
+            if pf.exists():
+                for name in [app_name, app_name.title(), app_name.lower()]:
+                    if (pf / name).exists() or (pf / f"{name}.exe").exists():
+                        return True
+                    # Check first level children for matching directory name
+                    try:
+                        for sub in pf.iterdir():
+                            if sub.is_dir() and sub.name.lower() == name.lower():
+                                return True
+                    except Exception:
+                        pass
+    return False
+
+def get_config_paths(app_name):
+    """Calculates all possible, absolute configuration file paths based on the operating system."""
     home = Path.home()
     system = sys.platform
     app = app_name.lower().replace(" ", "").replace("-", "")
+    paths = []
 
     # 1. Cursor Setup
     if app in ["cursor", "cursoragent"]:
-        return home / ".cursor" / "mcp.json"
+        paths.append(home / ".cursor" / "mcp.json")
 
     # 2. Claude Code Setup
-    if app == "claude" or app == "claudecode":
-        return home / ".claude.json"
+    elif app == "claude" or app == "claudecode":
+        paths.append(home / ".claude.json")
 
     # 3. Visual Studio Code / RooCode / Cline
-    if app in ["vscode", "visualstudiocode", "code", "opencode", "codex"]:
+    elif app in ["vscode", "visualstudiocode", "code", "opencode", "codex"]:
+        paths.append(home / ".cline" / "data" / "settings" / "cline_mcp_settings.json")
+        paths.append(home / ".roocode" / "data" / "settings" / "cline_mcp_settings.json")
         if system == "darwin":
-            return home / "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+            paths.append(home / "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json")
+            paths.append(home / "Library/Application Support/Code/User/globalStorage/roovet.roo-cline/settings/cline_mcp_settings.json")
         elif system == "win32":
             appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-            return appdata / "Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+            paths.append(appdata / "Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json")
+            paths.append(appdata / "Code/User/globalStorage/roovet.roo-cline/settings/cline_mcp_settings.json")
         else:
-            return home / ".config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+            paths.append(home / ".config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json")
+            paths.append(home / ".config/Code/User/globalStorage/roovet.roo-cline/settings/cline_mcp_settings.json")
 
     # 4. Trae IDE Setup
-    if app == "trae":
+    elif app == "trae":
+        paths.append(home / ".trae" / "mcp.json")
         if system == "darwin":
-            return home / "Library/Application Support/Trae/mcp.json"
+            paths.append(home / "Library/Application Support/Trae/mcp.json")
         elif system == "win32":
             appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-            return appdata / "Trae/mcp.json"
+            paths.append(appdata / "Trae/mcp.json")
         else:
-            return home / ".config/Trae/mcp.json"
+            paths.append(home / ".config/Trae/mcp.json")
 
     # 5. Windsurf Setup
-    if app == "windsurf":
+    elif app == "windsurf":
+        paths.append(home / ".codeium" / "windsurf" / "mcp_config.json")
         if system == "darwin":
-            return home / "Library/Application Support/Windsurf/mcp.json"
+            paths.append(home / "Library/Application Support/Windsurf/mcp.json")
         elif system == "win32":
             appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-            return appdata / "Windsurf" / "mcp.json"
+            paths.append(appdata / "Windsurf" / "mcp.json")
         else:
-            return home / ".config" / "Windsurf" / "mcp.json"
+            paths.append(home / ".config" / "Windsurf" / "mcp.json")
 
     # 6. Claude Desktop Setup
-    if app == "claudedesktop":
+    elif app == "claudedesktop":
         if system == "darwin":
-            return home / "Library/Application Support/Claude/claude_desktop_config.json"
+            paths.append(home / "Library/Application Support/Claude/claude_desktop_config.json")
         elif system == "win32":
             appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-            return appdata / "Claude" / "claude_desktop_config.json"
+            paths.append(appdata / "Claude" / "claude_desktop_config.json")
         else:
-            return home / ".config" / "Claude" / "claude_desktop_config.json"
+            paths.append(home / ".config" / "Claude" / "claude_desktop_config.json")
 
     # 7. ChatGPT Desktop Setup
-    if app == "chatgptdesktop":
+    elif app == "chatgptdesktop":
         if system == "darwin":
-            return home / "Library/Application Support/ChatGPT/mcp.json"
+            paths.append(home / "Library/Application Support/ChatGPT/mcp.json")
         elif system == "win32":
             appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-            return appdata / "ChatGPT" / "mcp.json"
+            paths.append(appdata / "ChatGPT" / "mcp.json")
         else:
-            return home / ".config" / "ChatGPT" / "mcp.json"
+            paths.append(home / ".config" / "ChatGPT" / "mcp.json")
 
     # 8. Antigravity Setup
-    if app == "antigravity":
-        return home / ".antigravity" / "mcp.json"
-    if app == "antigravityide":
-        return home / ".antigravity-ide" / "mcp.json"
-    if app == "antigravity2.0" or app == "antigravity20":
-        return home / ".antigravity-2.0" / "mcp.json"
-    if app == "antigravitycli":
-        return home / ".antigravity-cli" / "mcp.json"
+    elif app == "antigravity":
+        paths.append(home / ".antigravity" / "mcp.json")
+        paths.append(home / ".gemini" / "antigravity" / "mcp_config.json")
+        paths.append(home / ".gemini" / "antigravity" / "mcp.json")
+    elif app == "antigravityide":
+        paths.append(home / ".antigravity-ide" / "mcp.json")
+        paths.append(home / ".gemini" / "antigravity-ide" / "mcp_config.json")
+        paths.append(home / ".gemini" / "antigravity-ide" / "mcp.json")
+    elif app == "antigravity2.0" or app == "antigravity20":
+        paths.append(home / ".antigravity-2.0" / "mcp.json")
+        paths.append(home / ".gemini" / "antigravity-2.0" / "mcp_config.json")
+        paths.append(home / ".gemini" / "antigravity-2.0" / "mcp.json")
+    elif app == "antigravitycli":
+        paths.append(home / ".antigravity-cli" / "mcp.json")
+        paths.append(home / ".gemini" / "antigravity-cli" / "mcp_config.json")
+        paths.append(home / ".gemini" / "antigravity-cli" / "mcp.json")
 
     # Generic Fallback Scheme for Emerging Vibe Coding Tools
-    if system == "darwin":
-        home_dot_path = home / f".{app}" / "mcp.json"
-        if home_dot_path.parent.exists():
-            return home_dot_path
-        return home / f"Library/Application Support/{app_name}" / "mcp.json"
-    elif system == "win32":
-        appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-        return appdata / app_name / "mcp.json"
     else:
-        return home / f".config/{app}" / "mcp.json"
+        if system == "darwin":
+            home_dot_path = home / f".{app}" / "mcp.json"
+            paths.append(home_dot_path)
+            paths.append(home / f"Library/Application Support/{app_name}" / "mcp.json")
+        elif system == "win32":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
+            paths.append(appdata / app_name / "mcp.json")
+        else:
+            paths.append(home / f".config/{app}" / "mcp.json")
+
+    return paths
+
+def get_config_path(app_name):
+    """Calculates the primary, absolute configuration file path based on the operating system."""
+    paths = get_config_paths(app_name)
+    return paths[0] if paths else Path.home() / f".{app_name.lower()}" / "mcp.json"
 
 def split_export_file(export_file_path, output_dir_path):
     """Parses the single chat export JSON and splits it into individual neat files."""
@@ -165,31 +233,62 @@ def get_mcp_config():
 
 def update_json_config(app_name):
     """Safely injects the chronicle-mcp configuration into the resolved target application JSON."""
-    file_path = get_config_path(app_name)
+    file_paths = get_config_paths(app_name)
+    updated = False
     
-    try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        if file_path.exists():
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except json.JSONDecodeError:
-                data = {}
-        else:
-            data = {}
-
-        if "mcpServers" not in data:
-            data["mcpServers"] = {}
-
-        data["mcpServers"]["chronicle-mcp"] = get_mcp_config()
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+    for file_path in file_paths:
+        try:
+            is_primary = (file_path == file_paths[0])
+            if not is_primary and not file_path.parent.exists():
+                continue
+                
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             
-        print(f"Successfully configured chronicle-mcp inside {app_name} at: {file_path}")
-    except Exception as e:
-        print(f"Error updating {app_name} configuration: {e}", file=sys.stderr)
+            if file_path.exists():
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+            else:
+                data = {}
+
+            if "mcpServers" not in data:
+                data["mcpServers"] = {}
+
+            data["mcpServers"]["chronicle-mcp"] = get_mcp_config()
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                
+            print(f"Successfully configured chronicle-mcp inside {app_name} at: {file_path}")
+            updated = True
+        except Exception as e:
+            print(f"Error updating {app_name} configuration at {file_path}: {e}", file=sys.stderr)
+            
+    if not updated and file_paths:
+        try:
+            file_path = file_paths[0]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            if file_path.exists():
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except json.JSONDecodeError:
+                    data = {}
+            else:
+                data = {}
+
+            if "mcpServers" not in data:
+                data["mcpServers"] = {}
+
+            data["mcpServers"]["chronicle-mcp"] = get_mcp_config()
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            print(f"Successfully configured chronicle-mcp inside {app_name} at: {file_path}")
+        except Exception as e:
+            print(f"Error updating {app_name} fallback configuration: {e}", file=sys.stderr)
 
 def set_chats_folder(folder_path):
     """Saves the custom chats folder path to a local settings file."""
@@ -332,7 +431,7 @@ def select_apps_interactive(error_msgs=None):
                     custom_entry_lower = custom_input_stripped.lower()
                     if custom_entry_lower in SUPPORTED_TARGETS:
                         break
-                    elif get_config_path(custom_input_stripped).parent.exists():
+                    elif get_config_path(custom_input_stripped).parent.exists() or find_executable_or_app(custom_input_stripped):
                         break
                     else:
                         error_msgs = [f'App/IDE "{custom_input_stripped}" was not found on your system.']
@@ -358,7 +457,21 @@ def select_apps_interactive(error_msgs=None):
         
     return visible_items, custom_input
 
+def print_startup_logo():
+    logo = (
+        "\n\033[38;5;99m"
+        " ████████  ██    ██  ███████   ████████  ██    ██  ██████  ████████  ██        ████████\n"
+        "██         ██    ██  ██    ██  ██    ██  ███   ██    ██    ██        ██        ██      \n"
+        "██         ████████  ███████   ██    ██  ████  ██    ██    ██        ██        ███████ \n"
+        "██         ██    ██  ██   ██   ██    ██  ██ ██ ██    ██    ██        ██        ██      \n"
+        " ████████  ██    ██  ██    ██  ████████  ██  ████  ██████  ████████  ████████  ████████\033[0m\n"
+        "\n"
+        "                         \033[90mYOUR AI FORGETS. CHRONICLE REMEMBERS.\033[0m\n"
+    )
+    print(logo)
+
 def run_setup_wizard():
+    print_startup_logo()
     # Phase 1: The Temporal Split
     print()
     print("\033[38;5;99m── Chronicle Archive Setup ─────────────────────────────────────\033[0m")
@@ -437,7 +550,7 @@ def run_setup_wizard():
                     custom_entry_lower = custom_input_stripped.lower()
                     if custom_entry_lower in SUPPORTED_TARGETS:
                         selected_apps.append(custom_entry_lower)
-                    elif get_config_path(custom_input_stripped).parent.exists():
+                    elif get_config_path(custom_input_stripped).parent.exists() or find_executable_or_app(custom_input_stripped):
                         selected_apps.append(custom_entry_lower)
                     else:
                         invalid_apps.append((custom_input_stripped, "not_found"))
@@ -508,7 +621,7 @@ def run_setup_wizard():
                         selected_apps.append(custom_entry_lower)
                     else:
                         # Check if config path parent exists
-                        if get_config_path(custom_entry).parent.exists():
+                        if get_config_path(custom_entry).parent.exists() or find_executable_or_app(custom_entry):
                             selected_apps.append(custom_entry_lower)
                         else:
                             invalid_apps.append((custom_entry_lower, "not_found"))
