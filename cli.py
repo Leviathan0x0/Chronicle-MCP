@@ -216,7 +216,14 @@ def split_export_file(export_file_path, output_dir_path):
         print(f"Failed to split file: {e}", file=sys.stderr)
 
 def get_mcp_config():
-    """Dynamically locates the absolute path of uvx to prevent path resolution errors across platforms."""
+    """Dynamically locates the absolute path of chronicle or uvx to prevent path resolution errors."""
+    chronicle_path = shutil.which("chronicle")
+    if chronicle_path:
+        return {
+            "command": str(chronicle_path),
+            "args": []
+        }
+
     uvx_path = shutil.which("uvx")
     
     if not uvx_path:
