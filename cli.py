@@ -68,12 +68,87 @@ def find_executable_or_app(app_name):
                         pass
     return False
 
+def search_config_paths(app_name):
+    """Searches standard application data directories for folders matching app_name and returns possible config paths."""
+    home = Path.home()
+    system = sys.platform
+    app_clean = app_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+    found_paths = []
+    
+    # Define directories to search
+    search_dirs = []
+    if system == "darwin":
+        search_dirs.append(home / "Library/Application Support")
+        search_dirs.append(home)  # for dotfolders
+    elif system == "win32":
+        appdata = os.environ.get("APPDATA")
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if appdata:
+            search_dirs.append(Path(appdata))
+        if localappdata:
+            search_dirs.append(Path(localappdata))
+        search_dirs.append(home)
+    else:
+        config_home = os.environ.get("XDG_CONFIG_HOME")
+        if config_home:
+            search_dirs.append(Path(config_home))
+        else:
+            search_dirs.append(home / ".config")
+        search_dirs.append(home)
+
+    mcp_filenames = ["mcp.json", "mcp_config.json", "cline_mcp_settings.json", "claude_desktop_config.json"]
+    
+    for search_dir in search_dirs:
+        if not search_dir.exists():
+            continue
+            
+        try:
+            for item in search_dir.iterdir():
+                if not item.is_dir():
+                    continue
+                item_clean = item.name.lower().replace(" ", "").replace("-", "").replace("_", "")
+                
+                # Check if this folder matches the app name
+                if app_clean in item_clean or item_clean in app_clean:
+                    # Check for existing config files
+                    for fname in mcp_filenames:
+                        cfg_file = item / fname
+                        if cfg_file.exists():
+                            found_paths.append(cfg_file)
+                        
+                        # Check data/settings/ (for Cline style)
+                        nested_settings = item / "data" / "settings" / fname
+                        if nested_settings.exists():
+                            found_paths.append(nested_settings)
+                            
+                        # Check globalStorage/
+                        global_settings = item / "globalStorage"
+                        if global_settings.exists():
+                            try:
+                                for sub in global_settings.glob("**/settings/" + fname):
+                                    found_paths.append(sub)
+                            except Exception:
+                                pass
+                                
+                    # If we found matching directory, also propose creating mcp.json/mcp_config.json inside it
+                    found_paths.append(item / "mcp.json")
+                    found_paths.append(item / "mcp_config.json")
+        except Exception:
+            pass
+
+    return list(set(found_paths))
+
 def get_config_paths(app_name):
     """Calculates all possible, absolute configuration file paths based on the operating system."""
     home = Path.home()
     system = sys.platform
     app = app_name.lower().replace(" ", "").replace("-", "")
     paths = []
+
+    # First, search dynamically for existing files on the system matching the app_name
+    dynamic_paths = search_config_paths(app_name)
+    for dp in dynamic_paths:
+        paths.append(dp)
 
     # 1. Cursor Setup
     if app in ["cursor", "cursoragent"]:
@@ -84,7 +159,7 @@ def get_config_paths(app_name):
         paths.append(home / ".claude.json")
 
     # 3. Visual Studio Code / RooCode / Cline
-    elif app in ["vscode", "visualstudiocode", "code", "opencode", "codex"]:
+    elif app in ["vscode", "visualstudiocode", "code"]:
         paths.append(home / ".cline" / "data" / "settings" / "cline_mcp_settings.json")
         paths.append(home / ".roocode" / "data" / "settings" / "cline_mcp_settings.json")
         if system == "darwin":
@@ -228,15 +303,22 @@ def get_config_paths(app_name):
 
     # Generic Fallback Scheme for Emerging Vibe Coding Tools
     else:
+        paths.append(home / f".{app}" / "mcp.json")
+        paths.append(home / f".{app}" / "mcp_config.json")
+        paths.append(home / ".config" / app / "mcp.json")
+        paths.append(home / ".config" / app / "mcp_config.json")
+        
         if system == "darwin":
-            home_dot_path = home / f".{app}" / "mcp.json"
-            paths.append(home_dot_path)
             paths.append(home / f"Library/Application Support/{app_name}" / "mcp.json")
+            paths.append(home / f"Library/Application Support/{app_name}" / "mcp_config.json")
+            paths.append(home / f"Library/Application Support/{app}" / "mcp.json")
+            paths.append(home / f"Library/Application Support/{app}" / "mcp_config.json")
         elif system == "win32":
             appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
             paths.append(appdata / app_name / "mcp.json")
-        else:
-            paths.append(home / f".config/{app}" / "mcp.json")
+            paths.append(appdata / app_name / "mcp_config.json")
+            paths.append(appdata / app / "mcp.json")
+            paths.append(appdata / app / "mcp_config.json")
 
     return paths
 
