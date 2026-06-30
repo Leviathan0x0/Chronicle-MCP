@@ -287,6 +287,30 @@ def get_mcp_config():
     """Dynamically locates the absolute path of chronicle or uvx to prevent path resolution errors."""
     chronicle_path = shutil.which("chronicle")
     if chronicle_path:
+        try:
+            with open(chronicle_path, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+                if first_line.startswith("#!"):
+                    interpreter = first_line[2:].strip()
+                    parts = interpreter.split()
+                    if parts:
+                        cmd = parts[0]
+                        args = parts[1:]
+                        if "env" in Path(cmd).name and args:
+                            real_cmd = shutil.which(args[0])
+                            if real_cmd:
+                                return {
+                                    "command": str(real_cmd),
+                                    "args": [str(chronicle_path)] + args[1:]
+                                }
+                        elif Path(cmd).exists():
+                            return {
+                                "command": str(cmd),
+                                "args": [str(chronicle_path)] + args
+                            }
+        except Exception:
+            pass
+
         return {
             "command": str(chronicle_path),
             "args": []
