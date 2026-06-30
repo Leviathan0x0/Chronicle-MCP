@@ -145,6 +145,7 @@ def get_config_paths(app_name):
         paths.append(home / ".antigravity" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity" / "mcp.json")
+        paths.append(home / ".gemini" / "config" / "mcp_config.json")
         if system == "darwin":
             paths.append(home / "Library/Application Support/Antigravity/mcp.json")
             paths.append(home / "Library/Application Support/Antigravity/mcp_config.json")
@@ -165,6 +166,7 @@ def get_config_paths(app_name):
         paths.append(home / ".antigravity-ide" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity-ide" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity-ide" / "mcp.json")
+        paths.append(home / ".gemini" / "config" / "mcp_config.json")
         if system == "darwin":
             paths.append(home / "Library/Application Support/Antigravity IDE/mcp.json")
             paths.append(home / "Library/Application Support/Antigravity IDE/mcp_config.json")
@@ -185,6 +187,7 @@ def get_config_paths(app_name):
         paths.append(home / ".antigravity-2.0" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity-2.0" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity-2.0" / "mcp.json")
+        paths.append(home / ".gemini" / "config" / "mcp_config.json")
         if system == "darwin":
             paths.append(home / "Library/Application Support/Antigravity 2.0/mcp.json")
             paths.append(home / "Library/Application Support/Antigravity 2.0/mcp_config.json")
@@ -205,6 +208,7 @@ def get_config_paths(app_name):
         paths.append(home / ".antigravity-cli" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity-cli" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity-cli" / "mcp.json")
+        paths.append(home / ".gemini" / "config" / "mcp_config.json")
         if system == "darwin":
             paths.append(home / "Library/Application Support/Antigravity CLI/mcp.json")
             paths.append(home / "Library/Application Support/Antigravity CLI/mcp_config.json")
