@@ -145,18 +145,82 @@ def get_config_paths(app_name):
         paths.append(home / ".antigravity" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity" / "mcp.json")
+        if system == "darwin":
+            paths.append(home / "Library/Application Support/Antigravity/mcp.json")
+            paths.append(home / "Library/Application Support/Antigravity/mcp_config.json")
+            paths.append(home / "Library/Application Support/antigravity/mcp.json")
+            paths.append(home / "Library/Application Support/antigravity/mcp_config.json")
+        elif system == "win32":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
+            paths.append(appdata / "Antigravity" / "mcp.json")
+            paths.append(appdata / "Antigravity" / "mcp_config.json")
+            paths.append(appdata / "antigravity" / "mcp.json")
+            paths.append(appdata / "antigravity" / "mcp_config.json")
+        else:
+            paths.append(home / ".config/Antigravity/mcp.json")
+            paths.append(home / ".config/Antigravity/mcp_config.json")
+            paths.append(home / ".config/antigravity/mcp.json")
+            paths.append(home / ".config/antigravity/mcp_config.json")
     elif app == "antigravityide":
         paths.append(home / ".antigravity-ide" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity-ide" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity-ide" / "mcp.json")
+        if system == "darwin":
+            paths.append(home / "Library/Application Support/Antigravity IDE/mcp.json")
+            paths.append(home / "Library/Application Support/Antigravity IDE/mcp_config.json")
+            paths.append(home / "Library/Application Support/antigravity-ide/mcp.json")
+            paths.append(home / "Library/Application Support/antigravity-ide/mcp_config.json")
+        elif system == "win32":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
+            paths.append(appdata / "Antigravity IDE" / "mcp.json")
+            paths.append(appdata / "Antigravity IDE" / "mcp_config.json")
+            paths.append(appdata / "antigravity-ide" / "mcp.json")
+            paths.append(appdata / "antigravity-ide" / "mcp_config.json")
+        else:
+            paths.append(home / ".config/Antigravity IDE/mcp.json")
+            paths.append(home / ".config/Antigravity IDE/mcp_config.json")
+            paths.append(home / ".config/antigravity-ide/mcp.json")
+            paths.append(home / ".config/antigravity-ide/mcp_config.json")
     elif app == "antigravity2.0" or app == "antigravity20":
         paths.append(home / ".antigravity-2.0" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity-2.0" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity-2.0" / "mcp.json")
+        if system == "darwin":
+            paths.append(home / "Library/Application Support/Antigravity 2.0/mcp.json")
+            paths.append(home / "Library/Application Support/Antigravity 2.0/mcp_config.json")
+            paths.append(home / "Library/Application Support/antigravity-2.0/mcp.json")
+            paths.append(home / "Library/Application Support/antigravity-2.0/mcp_config.json")
+        elif system == "win32":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
+            paths.append(appdata / "Antigravity 2.0" / "mcp.json")
+            paths.append(appdata / "Antigravity 2.0" / "mcp_config.json")
+            paths.append(appdata / "antigravity-2.0" / "mcp.json")
+            paths.append(appdata / "antigravity-2.0" / "mcp_config.json")
+        else:
+            paths.append(home / ".config/Antigravity 2.0/mcp.json")
+            paths.append(home / ".config/Antigravity 2.0/mcp_config.json")
+            paths.append(home / ".config/antigravity-2.0/mcp.json")
+            paths.append(home / ".config/antigravity-2.0/mcp_config.json")
     elif app == "antigravitycli":
         paths.append(home / ".antigravity-cli" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity-cli" / "mcp_config.json")
         paths.append(home / ".gemini" / "antigravity-cli" / "mcp.json")
+        if system == "darwin":
+            paths.append(home / "Library/Application Support/Antigravity CLI/mcp.json")
+            paths.append(home / "Library/Application Support/Antigravity CLI/mcp_config.json")
+            paths.append(home / "Library/Application Support/antigravity-cli/mcp.json")
+            paths.append(home / "Library/Application Support/antigravity-cli/mcp_config.json")
+        elif system == "win32":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
+            paths.append(appdata / "Antigravity CLI" / "mcp.json")
+            paths.append(appdata / "Antigravity CLI" / "mcp_config.json")
+            paths.append(appdata / "antigravity-cli" / "mcp.json")
+            paths.append(appdata / "antigravity-cli" / "mcp_config.json")
+        else:
+            paths.append(home / ".config/Antigravity CLI/mcp.json")
+            paths.append(home / ".config/Antigravity CLI/mcp_config.json")
+            paths.append(home / ".config/antigravity-cli/mcp.json")
+            paths.append(home / ".config/antigravity-cli/mcp_config.json")
 
     # Generic Fallback Scheme for Emerging Vibe Coding Tools
     else:
