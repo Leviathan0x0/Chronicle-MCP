@@ -440,8 +440,8 @@ def update_json_config(app_name):
                         with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
                         import re
-                        content_clean = re.sub(r"//.*", "", content)
-                        content_clean = re.sub(r"/\*.*?\*/", "", content_clean, flags=re.DOTALL)
+                        pattern = re.compile(r'("(?:[^"\\]|\\.)*")|(/\*.*?\*/)|(//.*)', re.DOTALL)
+                        content_clean = pattern.sub(lambda m: m.group(1) if m.group(1) else '', content)
                         content_clean = re.sub(r",\s*([\]}])", r"\1", content_clean)
                         data = json.loads(content_clean)
                     except Exception:
@@ -489,8 +489,8 @@ def update_json_config(app_name):
                         with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
                         import re
-                        content_clean = re.sub(r"//.*", "", content)
-                        content_clean = re.sub(r"/\*.*?\*/", "", content_clean, flags=re.DOTALL)
+                        pattern = re.compile(r'("(?:[^"\\]|\\.)*")|(/\*.*?\*/)|(//.*)', re.DOTALL)
+                        content_clean = pattern.sub(lambda m: m.group(1) if m.group(1) else '', content)
                         content_clean = re.sub(r",\s*([\]}])", r"\1", content_clean)
                         data = json.loads(content_clean)
                     except Exception:
