@@ -96,7 +96,7 @@ def search_config_paths(app_name):
             search_dirs.append(home / ".config")
         search_dirs.append(home)
 
-    mcp_filenames = ["mcp.json", "mcp_config.json", "cline_mcp_settings.json", "claude_desktop_config.json"]
+    mcp_filenames = ["mcp.json", "mcp_config.json", "cline_mcp_settings.json", "claude_desktop_config.json", "opencode.json", "opencode.jsonc"]
     
     for search_dir in search_dirs:
         if not search_dir.exists():
@@ -215,7 +215,15 @@ def get_config_paths(app_name):
         else:
             paths.append(home / ".config" / "ChatGPT" / "mcp.json")
 
-    # 8. Antigravity Setup
+    # 8. OpenCode Setup
+    elif app == "opencode":
+        paths.append(home / ".config" / "opencode" / "opencode.jsonc")
+        paths.append(home / ".config" / "opencode" / "opencode.json")
+        if system == "darwin":
+            paths.append(home / "Library/Application Support/ai.opencode.desktop/mcp.json")
+            paths.append(home / "Library/Application Support/ai.opencode.desktop/mcp_config.json")
+
+    # 9. Antigravity Setup
     elif app == "antigravity":
         paths.append(home / ".antigravity" / "mcp.json")
         paths.append(home / ".gemini" / "antigravity" / "mcp_config.json")
@@ -425,19 +433,41 @@ def update_json_config(app_name):
                 
             file_path.parent.mkdir(parents=True, exist_ok=True)
             
+            data = {}
             if file_path.exists():
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except json.JSONDecodeError:
-                    data = {}
+                if file_path.suffix == ".jsonc":
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        import re
+                        content_clean = re.sub(r"//.*", "", content)
+                        content_clean = re.sub(r"/\*.*?\*/", "", content_clean, flags=re.DOTALL)
+                        content_clean = re.sub(r",\s*([\]}])", r"\1", content_clean)
+                        data = json.loads(content_clean)
+                    except Exception:
+                        data = {}
+                else:
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except json.JSONDecodeError:
+                        data = {}
+
+            mcp_config = get_mcp_config()
+            is_opencode = (file_path.name in ["opencode.json", "opencode.jsonc"] or "opencode" in app_name.lower())
+            
+            if is_opencode:
+                if "mcp" not in data or not isinstance(data["mcp"], dict):
+                    data["mcp"] = {}
+                data["mcp"]["chronicle-mcp"] = {
+                    "type": "local",
+                    "command": [mcp_config["command"]] + mcp_config.get("args", []),
+                    "enabled": True
+                }
             else:
-                data = {}
-
-            if "mcpServers" not in data:
-                data["mcpServers"] = {}
-
-            data["mcpServers"]["chronicle-mcp"] = get_mcp_config()
+                if "mcpServers" not in data or not isinstance(data["mcpServers"], dict):
+                    data["mcpServers"] = {}
+                data["mcpServers"]["chronicle-mcp"] = mcp_config
 
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -451,19 +481,42 @@ def update_json_config(app_name):
         try:
             file_path = file_paths[0]
             file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            data = {}
             if file_path.exists():
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except json.JSONDecodeError:
-                    data = {}
+                if file_path.suffix == ".jsonc":
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        import re
+                        content_clean = re.sub(r"//.*", "", content)
+                        content_clean = re.sub(r"/\*.*?\*/", "", content_clean, flags=re.DOTALL)
+                        content_clean = re.sub(r",\s*([\]}])", r"\1", content_clean)
+                        data = json.loads(content_clean)
+                    except Exception:
+                        data = {}
+                else:
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except json.JSONDecodeError:
+                        data = {}
+
+            mcp_config = get_mcp_config()
+            is_opencode = (file_path.name in ["opencode.json", "opencode.jsonc"] or "opencode" in app_name.lower())
+            
+            if is_opencode:
+                if "mcp" not in data or not isinstance(data["mcp"], dict):
+                    data["mcp"] = {}
+                data["mcp"]["chronicle-mcp"] = {
+                    "type": "local",
+                    "command": [mcp_config["command"]] + mcp_config.get("args", []),
+                    "enabled": True
+                }
             else:
-                data = {}
-
-            if "mcpServers" not in data:
-                data["mcpServers"] = {}
-
-            data["mcpServers"]["chronicle-mcp"] = get_mcp_config()
+                if "mcpServers" not in data or not isinstance(data["mcpServers"], dict):
+                    data["mcpServers"] = {}
+                data["mcpServers"]["chronicle-mcp"] = mcp_config
 
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
