@@ -217,6 +217,17 @@ def split_export_file(export_file_path, output_dir_path):
 
 def get_mcp_config():
     """Dynamically locates the absolute path of uvx to prevent path resolution errors across platforms."""
+    # Check if we are running in a local development workspace
+    script_dir = Path(__file__).parent.resolve()
+    venv_python = script_dir / "venv" / "bin" / "python3"
+    if venv_python.exists() and (script_dir / "pyproject.toml").exists():
+        return {
+            "command": str(venv_python),
+            "args": [
+                str(script_dir / "cli.py")
+            ]
+        }
+
     uvx_path = shutil.which("uvx")
     
     if not uvx_path:

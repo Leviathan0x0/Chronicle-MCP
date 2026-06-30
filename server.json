@@ -17,7 +17,7 @@
         "type": "stdio"
       },
       "installation": {
-        "uv": "uvx --from git+https://github.com/Leviathan0x0/Chronicle-MCP chronicle-mcp"
+        "uv": "uvx --from git+https://github.com/Leviathan0x0/Chronicle-MCP chronicle"
       }
     }
   ]
