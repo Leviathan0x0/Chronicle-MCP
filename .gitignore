@@ -26,3 +26,9 @@ exports/
 .watch_state.json
 knowledge_index.json
 mcp_config.json
+
+# Local agent & build artifacts
+build/
+.claude/
+.junie/
+

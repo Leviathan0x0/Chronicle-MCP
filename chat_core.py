@@ -5,13 +5,26 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import math
 import os
 import re
 import shutil
+import tempfile
+import threading
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger("chronicle")
+
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+}
 
 def get_default_base_dir() -> str:
     if os.environ.get("CHRONICLE_BASE_DIR"):
@@ -59,11 +72,21 @@ def resolve_default_transcripts_dir(client: str) -> str:
         return os.path.join(home, ".cline-transcripts")
     elif client == "copilot":
         return os.path.join(home, ".copilot-transcripts")
-    return os.path.join(home, f".{client}-transcripts")
+    safe_client = re.sub(r"[^a-zA-Z0-9_-]", "_", client)
+    return os.path.join(home, f".{safe_client}-transcripts")
+
 
 
 def parse_external_transcript(file_path: str) -> list[dict] | None:
     """Parse an external transcript file (JSON, JSONL, or MD) into standard messages."""
+    if not os.path.isfile(file_path):
+        return None
+    try:
+        if os.path.getsize(file_path) > MAX_FILE_SIZE:
+            return None
+    except OSError:
+        return None
+
     if file_path.endswith(".jsonl"):
         messages = []
         try:
@@ -173,8 +196,21 @@ ACTION_PATTERNS = [
 
 
 def sanitize_filename(name: str) -> str:
-    safe_name = re.sub(r'[\\/*?:"<>| ]', "_", name)
-    return safe_name.strip()[:50]
+    if not name or not isinstance(name, str):
+        return "untitled"
+    clean = name.replace("\x00", "")
+    safe_name = re.sub(r'[\\/*?:"<>|\x00-\x1f ]', "_", clean)
+    safe_name = re.sub(r"\.{2,}", "_", safe_name)
+    safe_name = safe_name.strip(". _")
+    if not safe_name:
+        return "untitled"
+    safe_name = safe_name[:50].rstrip(". _")
+    if not safe_name:
+        return "untitled"
+    stem = safe_name.split(".")[0].upper()
+    if stem in WINDOWS_RESERVED:
+        safe_name = f"_{safe_name}"
+    return safe_name
 
 
 def parse_to_plain_text(chat_data: dict | list) -> list[str]:
@@ -220,7 +256,9 @@ def parse_to_plain_text(chat_data: dict | list) -> list[str]:
         for msg in raw_msgs:
             if not isinstance(msg, dict):
                 continue
-            role = msg.get("role") or msg.get("author", {}).get("role") or msg.get("sender") or "user"
+            author = msg.get("author")
+            author_role = author.get("role") if isinstance(author, dict) else (author if isinstance(author, str) else None)
+            role = msg.get("role") or author_role or msg.get("sender") or "user"
             role_str = str(role).lower()
             if role_str in ["human", "user", "u"]:
                 role = "user"
@@ -254,19 +292,35 @@ def _role_prefix(role: str) -> str:
 
 
 def summarize_text_code_blocks(text: str) -> str:
-    pattern = re.compile(r"```([a-zA-Z0-9+#_-]*)\s*\n(.*?)\n\s*```", re.DOTALL)
-
-    def replacer(match):
-        lang = match.group(1).strip() or "text"
-        code = match.group(2)
-        lines_count = len(code.splitlines())
-        return f"\n[Code Block: {lang}, {lines_count} lines. Re-run tool with summarize_code=False to view full code]\n"
-
-    return pattern.sub(replacer, text)
+    lines = text.splitlines(keepends=True)
+    result = []
+    in_code = False
+    current_lang = "text"
+    code_lines = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not in_code:
+                in_code = True
+                current_lang = stripped[3:].strip() or "text"
+                code_lines = 0
+            else:
+                in_code = False
+                post = "\n" if line.endswith("\n") else ""
+                result.append(f"\n[Code Block: {current_lang}, {code_lines} lines. Re-run tool with summarize_code=False to view full code]\n{post}")
+        else:
+            if in_code:
+                code_lines += 1
+            else:
+                result.append(line)
+    if in_code:
+        result.append(f"\n[Code Block: {current_lang}, {code_lines} lines. Re-run tool with summarize_code=False to view full code]\n")
+    return "".join(result)
 
 
 def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]{3,}", text.lower())
+    return re.findall(r"(?u)\b\w{3,}\b", text.lower())
+
 
 
 def _tfidf_vectors(docs: list[str]) -> tuple[list[Counter[str]], Counter[str]]:
@@ -300,6 +354,8 @@ def _cosine_similarity(a: Counter[str], b: Counter[str]) -> float:
 
 def apply_temporal_decay(raw_score: float, doc_timestamp: float, half_life_days: int = 30) -> float:
     """Applies exponential decay to a lexical search score based on document age."""
+    if doc_timestamp <= 0.0 or half_life_days <= 0:
+        return raw_score
     import time
     current_time = time.time()
     delta_t_seconds = max(0.0, current_time - doc_timestamp)
@@ -319,34 +375,56 @@ def calculate_bm25_score(
     b: float = 0.85
 ) -> float:
     """Computes the Okapi BM25 score for a document against a set of query terms."""
-    if n_docs == 0:
+    if n_docs <= 0 or not query_terms:
         return 0.0
         
-    avgdl = sum(doc_lengths.values()) / n_docs
-    score = 0.0
     doc_len = doc_lengths.get(doc_id, 0)
-    
     if doc_len == 0:
         return 0.0
 
+    # Determine client prefix if doc_id is scoped (e.g. "client/filename.json")
+    client_prefix = doc_id.split("/", 1)[0] + "/" if "/" in doc_id else ""
+    if client_prefix:
+        client_doc_lens = [l for d, l in doc_lengths.items() if d.startswith(client_prefix)]
+        effective_n_docs = len(client_doc_lens) if len(client_doc_lens) > 0 else n_docs
+        total_len = sum(client_doc_lens)
+    else:
+        effective_n_docs = n_docs
+        total_len = sum(doc_lengths.values())
+
+    if effective_n_docs == 0:
+        return 0.0
+
+    avgdl = total_len / effective_n_docs
+    if avgdl <= 0:
+        return 0.0
+
+    score = 0.0
     for term in query_terms:
         if term not in term_frequencies:
             continue
             
-        n_q = len(term_frequencies[term])
+        term_docs = term_frequencies[term]
+        if client_prefix:
+            n_q = sum(1 for d in term_docs if d.startswith(client_prefix))
+        else:
+            n_q = len(term_docs)
+
         if n_q == 0:
             continue
             
-        f_q = term_frequencies[term].get(doc_id, 0)
+        f_q = term_docs.get(doc_id, 0)
         if f_q == 0:
             continue
             
-        idf = math.log(((n_docs - n_q + 0.5) / (n_q + 0.5)) + 1.0)
+        # Non-negative Robertson-Spärck Jones IDF:
+        idf_ratio = (effective_n_docs - n_q + 0.5) / (n_q + 0.5)
+        idf = math.log(max(0.0, idf_ratio) + 1.0)
         
         numerator = f_q * (k1 + 1.0)
         denominator = f_q + k1 * (1.0 - b + b * (doc_len / avgdl))
-        
-        score += idf * (numerator / denominator)
+        if denominator > 0:
+            score += idf * (numerator / denominator)
         
     return score
 
@@ -416,7 +494,9 @@ def parse_to_messages_with_timestamps(chat_data: dict | list) -> list[dict]:
         for msg in raw_msgs:
             if not isinstance(msg, dict):
                 continue
-            role = msg.get("role") or msg.get("author", {}).get("role") or msg.get("sender") or "user"
+            author = msg.get("author")
+            author_role = author.get("role") if isinstance(author, dict) else (author if isinstance(author, str) else None)
+            role = msg.get("role") or author_role or msg.get("sender") or "user"
             role_str = str(role).lower()
             if role_str in ["human", "user", "u"]:
                 role = "user"
@@ -445,6 +525,24 @@ def parse_to_messages_with_timestamps(chat_data: dict | list) -> list[dict]:
     return messages
 
 
+def _extract_msg_text(msg: Any) -> str:
+    """Extract plain text from various message representations (content vs text, string vs list)."""
+    if not isinstance(msg, dict):
+        return str(msg) if msg is not None else ""
+    val = msg.get("text") or msg.get("content") or ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        parts = []
+        for p in val:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict) and "text" in p:
+                parts.append(str(p["text"]))
+        return " ".join(parts)
+    return str(val)
+
+
 def _chunk_conversation(messages: list[dict]) -> list[list[dict]]:
     if not messages:
         return []
@@ -464,8 +562,8 @@ def _chunk_conversation(messages: list[dict]) -> list[list[dict]]:
         group_a = messages[i-4:i]
         group_b = messages[i-3:i+1]
         
-        text_a = " ".join(msg.get("text", "") for msg in group_a)
-        text_b = " ".join(msg.get("text", "") for msg in group_b)
+        text_a = " ".join(_extract_msg_text(msg) for msg in group_a)
+        text_b = " ".join(_extract_msg_text(msg) for msg in group_b)
         
         tokens_a = set(re.findall(r'[a-z0-9]+', text_a.lower()))
         tokens_b = set(re.findall(r'[a-z0-9]+', text_b.lower()))
@@ -526,6 +624,23 @@ def _parse_part_file_name(file_name: str) -> tuple[str, int] | None:
     return None
 
 
+def _is_safe_stale_target(target_path: str, base_dir: str) -> bool:
+    if not target_path or not isinstance(target_path, str):
+        return False
+    if "\x00" in target_path:
+        return False
+    real_base = os.path.realpath(base_dir)
+    real_cwd = os.path.realpath(os.getcwd())
+    try:
+        candidate = target_path if os.path.isabs(target_path) else os.path.join(base_dir, target_path)
+        resolved = os.path.realpath(candidate)
+        in_base = os.path.commonpath([resolved, real_base]) == real_base
+        in_cwd = os.path.commonpath([resolved, real_cwd]) == real_cwd
+        return in_base or in_cwd
+    except (ValueError, Exception):
+        return False
+
+
 def _evaluate_stale_conditions(receipt_data: dict, base_dir: str) -> bool:
     """
     Monitors file modifications relative to the receipt creation time.
@@ -533,21 +648,29 @@ def _evaluate_stale_conditions(receipt_data: dict, base_dir: str) -> bool:
     """
     import os
     import glob
-    creation_time = receipt_data.get("timestamp", 0.0)
+    creation_time = _parse_timestamp(receipt_data.get("timestamp")) or 0.0
     stale_if = receipt_data.get("invalidation", {}).get("stale_if", [])
+    if not isinstance(stale_if, list):
+        return False
     for target in stale_if:
+        if not isinstance(target, dict):
+            continue
         fpath = target.get("file_path")
         glob_pat = target.get("glob_pattern")
-        if fpath:
+        if fpath and isinstance(fpath, str):
             resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
-            if os.path.exists(resolved_fpath):
+            if _is_safe_stale_target(resolved_fpath, base_dir) and os.path.exists(resolved_fpath):
                 mtime = os.path.getmtime(resolved_fpath)
                 if mtime > creation_time:
                     return True
-        elif glob_pat:
+        elif glob_pat and isinstance(glob_pat, str):
             resolved_glob = glob_pat if os.path.isabs(glob_pat) else os.path.join(base_dir, glob_pat)
-            for matched_path in glob.glob(resolved_glob, recursive=True):
-                if os.path.exists(matched_path):
+            count = 0
+            for matched_path in glob.iglob(resolved_glob, recursive=True):
+                count += 1
+                if count > 50:
+                    break
+                if _is_safe_stale_target(matched_path, base_dir) and os.path.exists(matched_path):
                     mtime = os.path.getmtime(matched_path)
                     if mtime > creation_time:
                         return True
@@ -559,23 +682,32 @@ def _resolve_active_receipt(receipt_data: dict, base_dir: str) -> dict:
     Catches stale states, intercepts the payload, and dynamically mutates
     both the status to 'blocked/stale' and the next_safe_action prompt.
     """
+    invalidation = receipt_data.setdefault("invalidation", {})
+    if not isinstance(invalidation, dict):
+        invalidation = {}
+        receipt_data["invalidation"] = invalidation
+
     if _evaluate_stale_conditions(receipt_data, base_dir):
         receipt_data["status"] = "blocked/stale"
         
         invalid_causes = []
         import os
-        stale_if = receipt_data.get("invalidation", {}).get("stale_if", [])
-        creation_time = receipt_data.get("timestamp", 0.0)
-        for target in stale_if:
-            fpath = target.get("file_path")
-            if fpath:
-                resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
-                if os.path.exists(resolved_fpath) and os.path.getmtime(resolved_fpath) > creation_time:
-                    invalid_causes.append(fpath)
-                    
+        stale_if = invalidation.get("stale_if", [])
+        creation_time = _parse_timestamp(receipt_data.get("timestamp")) or 0.0
+        if isinstance(stale_if, list):
+            for target in stale_if:
+                if not isinstance(target, dict):
+                    continue
+                fpath = target.get("file_path")
+                if fpath and isinstance(fpath, str):
+                    resolved_fpath = fpath if os.path.isabs(fpath) else os.path.join(base_dir, fpath)
+                    if _is_safe_stale_target(resolved_fpath, base_dir) and os.path.exists(resolved_fpath):
+                        if os.path.getmtime(resolved_fpath) > creation_time:
+                            invalid_causes.append(fpath)
+                        
         cause_str = ", ".join(invalid_causes) if invalid_causes else "monitored files"
-        original_action = receipt_data.get("invalidation", {}).get("next_safe_action", "")
-        receipt_data["invalidation"]["next_safe_action"] = (
+        original_action = invalidation.get("next_safe_action", "")
+        invalidation["next_safe_action"] = (
             f"Blocked by stale/modified files ({cause_str}). "
             f"Mandatory active re-observation required. Run verification tests before proceeding. "
             f"Original action: {original_action}"
@@ -589,11 +721,17 @@ def _is_receipt_stale(file_path: str, creation_timestamp: float, base_dir: str) 
     """
     import os
     import json
-    if not os.path.exists(file_path):
+    if not file_path or not os.path.exists(file_path):
+        return False
+    if not _is_safe_stale_target(file_path, base_dir):
         return False
     try:
+        if os.path.getsize(file_path) > MAX_FILE_SIZE:
+            return False
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if not isinstance(data, dict):
+            return False
         return _evaluate_stale_conditions(data, base_dir)
     except Exception:
         return False
@@ -626,12 +764,15 @@ class ChatConnector:
         self.serialized_index_path = os.path.join(self.base_dir, ".chronicle_index.json")
         self.cursor_transcripts_dir = cursor_transcripts_dir or DEFAULT_CURSOR_TRANSCRIPTS
         self._pending_session: dict[str, Any] | None = None
+        self._lock = threading.RLock()
         os.makedirs(self.chats_dir, exist_ok=True)
         os.makedirs(self.exports_dir, exist_ok=True)
         self._ensure_editor_rules_configured()
 
     def _ensure_editor_rules_configured(self) -> None:
         import sys
+        if os.environ.get("CHRONICLE_AUTO_CONFIGURE_RULES") != "1":
+            return
         if "unittest" in sys.modules or "pytest" in sys.modules:
             return
         try:
@@ -736,217 +877,299 @@ class ChatConnector:
             return default_config
 
     def save_config(self, updates: dict) -> dict:
-        config = self.load_config()
-        config.update(updates)
-        self._write_json(self.config_path, config)
-        return config
+        with self._lock:
+            config = self.load_config()
+            config.update(updates)
+            self._write_json(self.config_path, config)
+            return config
 
     def resolve_chats_dir(self, client: str = "default") -> str:
         config = self.load_config()
-        rel = config.get("client_paths", {}).get(client, "chats")
-        path = os.path.join(self.base_dir, rel)
-        os.makedirs(path, exist_ok=True)
-        return path
+        client_paths = config.get("client_paths", {})
+        rel = client_paths.get(client)
+        if not rel or not isinstance(rel, str):
+            if client == "default":
+                rel = "chats"
+            else:
+                safe_client = re.sub(r"[^a-zA-Z0-9_-]", "_", client)
+                rel = f"chats/{safe_client}" if safe_client else "chats"
+        if rel.startswith("/") or rel.startswith("\\") or ":" in rel or ".." in rel.replace("\\", "/").split("/"):
+            rel = "chats"
+        norm_rel = rel.replace("\\", "/").lstrip("/")
+        abs_base = os.path.abspath(self.base_dir)
+        target_path = os.path.abspath(os.path.join(abs_base, norm_rel))
+        try:
+            if os.path.commonpath([target_path, abs_base]) != abs_base:
+                target_path = os.path.abspath(os.path.join(abs_base, "chats"))
+        except ValueError:
+            target_path = os.path.abspath(os.path.join(abs_base, "chats"))
+        os.makedirs(target_path, exist_ok=True)
+        return target_path
 
     # ── Security / IO ───────────────────────────────────────────────────────
 
     def _safe_chat_path(self, file_name: str, client: str = "default") -> str | None:
-        if ".." in file_name or file_name.startswith("/"):
+        if not file_name or not isinstance(file_name, str):
             return None
+        if "\x00" in file_name:
+            return None
+        norm_name = file_name.replace("\\", "/")
+        if norm_name.startswith("/") or ":" in norm_name:
+            return None
+        if ".." in norm_name.split("/"):
+            return None
+        base_name = os.path.basename(norm_name)
+        if not base_name or base_name in (".", "..") or ".." in base_name:
+            return None
+        if not (base_name.endswith(".json") or base_name.endswith(".json.gz")):
+            base_name = f"{base_name}.json"
         chats_dir = self.resolve_chats_dir(client)
-        file_name = os.path.basename(file_name)
-        if not file_name.endswith(".json"):
-            file_name = f"{file_name}.json" if not file_name.endswith(".json.gz") else file_name
-        file_path = os.path.join(chats_dir, file_name)
-        if not os.path.abspath(file_path).startswith(os.path.abspath(chats_dir)):
+        abs_chats_dir = os.path.abspath(chats_dir)
+        abs_file_path = os.path.abspath(os.path.join(abs_chats_dir, base_name))
+        try:
+            if os.path.commonpath([abs_file_path, abs_chats_dir]) != abs_chats_dir:
+                return None
+        except ValueError:
             return None
-        return file_path
+        if os.path.dirname(abs_file_path) != abs_chats_dir:
+            return None
+        if os.path.islink(abs_file_path):
+            real_file = os.path.realpath(abs_file_path)
+            real_chats = os.path.realpath(abs_chats_dir)
+            try:
+                if os.path.commonpath([real_file, real_chats]) != real_chats:
+                    return None
+            except ValueError:
+                return None
+        return abs_file_path
 
     def _read_chat_file(self, file_path: str) -> dict | list:
+        if os.path.getsize(file_path) > MAX_FILE_SIZE:
+            raise ValueError(f"Chat file exceeds maximum size limit (50MB): {file_path}")
         if file_path.endswith(".gz"):
+            chunks = []
+            total_bytes = 0
             with gzip.open(file_path, "rt", encoding="utf-8") as f:
-                return json.load(f)
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk.encode("utf-8"))
+                    if total_bytes > MAX_FILE_SIZE:
+                        raise ValueError(f"Decompressed chat file exceeds maximum size limit (50MB): {file_path}")
+                    chunks.append(chunk)
+            return json.loads("".join(chunks))
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _write_json(self, path: str, data: Any) -> None:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        with self._lock:
+            dir_name = os.path.dirname(os.path.abspath(path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=dir_name, prefix=".tmp_chronicle_", suffix=".json"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                raise
 
     def _load_serialized_index(self) -> dict:
-        if not os.path.exists(self.serialized_index_path):
-            return {"timestamps": {}, "doc_lengths": {}, "index": {}}
-        try:
-            with open(self.serialized_index_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
+        with self._lock:
+            if not os.path.exists(self.serialized_index_path):
                 return {"timestamps": {}, "doc_lengths": {}, "index": {}}
-            data.setdefault("timestamps", {})
-            data.setdefault("doc_lengths", {})
-            data.setdefault("index", {})
-            return data
-        except Exception:
-            return {"timestamps": {}, "doc_lengths": {}, "index": {}}
+            try:
+                with open(self.serialized_index_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    return {"timestamps": {}, "doc_lengths": {}, "index": {}}
+                data.setdefault("timestamps", {})
+                data.setdefault("doc_lengths", {})
+                data.setdefault("index", {})
+                return data
+            except Exception as e:
+                logger.warning("Failed to load serialized index %s: %s", self.serialized_index_path, e)
+                try:
+                    if os.path.exists(self.serialized_index_path) and os.path.getsize(self.serialized_index_path) > 0:
+                        bak_path = self.serialized_index_path + ".bak"
+                        shutil.copy2(self.serialized_index_path, bak_path)
+                        logger.warning("Created backup of corrupted index at %s", bak_path)
+                except Exception:
+                    pass
+                return {"timestamps": {}, "doc_lengths": {}, "index": {}}
 
     def _update_file_index(self, file_name: str, client: str = "default") -> None:
-        file_path = self._safe_chat_path(file_name, client)
-        if not file_path or not os.path.exists(file_path):
-            return
-        try:
-            mtime = os.path.getmtime(file_path)
-            index_data = self._load_serialized_index()
+        with self._lock:
+            file_path = self._safe_chat_path(file_name, client)
+            if not file_path or not os.path.exists(file_path):
+                return
+            try:
+                mtime = os.path.getmtime(file_path)
+                index_data = self._load_serialized_index()
+                doc_key_prefix = f"{client}/{file_name}"
+
+                # Read and parse raw messages
+                raw = self._read_chat_file(file_path)
+                messages = parse_to_messages_with_timestamps(raw)
+                chunks = _chunk_conversation(messages)
+
+                # Clean old index entries for this file (and all its parts)
+                timestamps = index_data["timestamps"]
+                doc_lengths = index_data["doc_lengths"]
+                index_map = index_data["index"]
+
+                for keyword, docs in list(index_map.items()):
+                    for dkey in list(docs.keys()):
+                        if _is_part_of_file(dkey, file_name, client):
+                            del docs[dkey]
+                    if not docs:
+                        del index_map[keyword]
+                
+                for dkey in list(doc_lengths.keys()):
+                    if _is_part_of_file(dkey, file_name, client):
+                        del doc_lengths[dkey]
+                        
+                for dkey in list(timestamps.keys()):
+                    if dkey == doc_key_prefix:
+                        del timestamps[dkey]
+
+                # Index new parts
+                for p, chunk in enumerate(chunks, 1):
+                    part_file = _part_file_name(file_name, p)
+                    part_key = f"{client}/{part_file}"
+                    text = " ".join(_extract_msg_text(msg) for msg in chunk)
+                    tokens = _tokenize(text)
+                    counts = Counter(tokens)
+
+                    for keyword, count in counts.items():
+                        index_map.setdefault(keyword, {})[part_key] = count
+                    
+                    doc_lengths[part_key] = len(tokens)
+
+                # Map the original file name to mtime in timestamps
+                timestamps[doc_key_prefix] = mtime
+                self._write_json(self.serialized_index_path, index_data)
+            except Exception as e:
+                logger.warning("Failed to update index for %s: %s", file_name, e)
+
+    def _remove_file_from_index(self, file_name: str, client: str = "default") -> None:
+        with self._lock:
             doc_key_prefix = f"{client}/{file_name}"
 
-            # Read and parse raw messages
-            raw = self._read_chat_file(file_path)
-            messages = parse_to_messages_with_timestamps(raw)
-            chunks = _chunk_conversation(messages)
+            index_data = self._load_serialized_index()
+            timestamps = index_data.get("timestamps", {})
+            doc_lengths = index_data.get("doc_lengths", {})
+            index_map = index_data.get("index", {})
 
-            # Clean old index entries for this file (and all its parts)
-            timestamps = index_data["timestamps"]
-            doc_lengths = index_data["doc_lengths"]
-            index_map = index_data["index"]
+            changed = False
+            for dkey in list(timestamps.keys()):
+                if dkey == doc_key_prefix:
+                    del timestamps[dkey]
+                    changed = True
+
+            for dkey in list(doc_lengths.keys()):
+                if _is_part_of_file(dkey, file_name, client):
+                    del doc_lengths[dkey]
+                    changed = True
 
             for keyword, docs in list(index_map.items()):
                 for dkey in list(docs.keys()):
                     if _is_part_of_file(dkey, file_name, client):
                         del docs[dkey]
+                        changed = True
                 if not docs:
                     del index_map[keyword]
-            
-            for dkey in list(doc_lengths.keys()):
-                if _is_part_of_file(dkey, file_name, client):
-                    del doc_lengths[dkey]
-                    
-            for dkey in list(timestamps.keys()):
-                if dkey == doc_key_prefix:
-                    del timestamps[dkey]
 
-            # Index new parts
-            for p, chunk in enumerate(chunks, 1):
-                part_file = _part_file_name(file_name, p)
-                part_key = f"{client}/{part_file}"
-                text = " ".join(msg["text"] for msg in chunk)
-                tokens = _tokenize(text)
-                counts = Counter(tokens)
-
-                for keyword, count in counts.items():
-                    index_map.setdefault(keyword, {})[part_key] = count
-                
-                doc_lengths[part_key] = len(tokens)
-
-            # Map the original file name to mtime in timestamps
-            timestamps[doc_key_prefix] = mtime
-            self._write_json(self.serialized_index_path, index_data)
-        except Exception:
-            pass
-
-    def _remove_file_from_index(self, file_name: str, client: str = "default") -> None:
-        doc_key_prefix = f"{client}/{file_name}"
-
-        index_data = self._load_serialized_index()
-        timestamps = index_data.get("timestamps", {})
-        doc_lengths = index_data.get("doc_lengths", {})
-        index_map = index_data.get("index", {})
-
-        changed = False
-        for dkey in list(timestamps.keys()):
-            if dkey == doc_key_prefix:
-                del timestamps[dkey]
-                changed = True
-
-        for dkey in list(doc_lengths.keys()):
-            if _is_part_of_file(dkey, file_name, client):
-                del doc_lengths[dkey]
-                changed = True
-
-        for keyword, docs in list(index_map.items()):
-            for dkey in list(docs.keys()):
-                if _is_part_of_file(dkey, file_name, client):
-                    del docs[dkey]
-                    changed = True
-            if not docs:
-                del index_map[keyword]
-
-        if changed:
-            self._write_json(self.serialized_index_path, index_data)
+            if changed:
+                self._write_json(self.serialized_index_path, index_data)
 
     def _sync_serialized_index(self, client: str = "default") -> dict:
-        index_data = self._load_serialized_index()
-        timestamps = index_data.setdefault("timestamps", {})
-        doc_lengths = index_data.setdefault("doc_lengths", {})
-        index_map = index_data.setdefault("index", {})
+        with self._lock:
+            index_data = self._load_serialized_index()
+            timestamps = index_data.setdefault("timestamps", {})
+            doc_lengths = index_data.setdefault("doc_lengths", {})
+            index_map = index_data.setdefault("index", {})
 
-        chats_dir = self.resolve_chats_dir(client)
-        files = self._list_json_files(client)
+            chats_dir = self.resolve_chats_dir(client)
+            files = self._list_json_files(client)
 
-        changed = False
-        current_keys = set()
-        for file in files:
-            doc_key_prefix = f"{client}/{file}"
-            current_keys.add(doc_key_prefix)
-            file_path = os.path.join(chats_dir, file)
-            try:
-                mtime = os.path.getmtime(file_path)
-                if doc_key_prefix not in timestamps or timestamps[doc_key_prefix] < mtime:
-                    raw = self._read_chat_file(file_path)
-                    messages = parse_to_messages_with_timestamps(raw)
-                    chunks = _chunk_conversation(messages)
+            changed = False
+            current_keys = set()
+            for file in files:
+                doc_key_prefix = f"{client}/{file}"
+                current_keys.add(doc_key_prefix)
+                file_path = os.path.join(chats_dir, file)
+                try:
+                    mtime = os.path.getmtime(file_path)
+                    if doc_key_prefix not in timestamps or timestamps[doc_key_prefix] < mtime:
+                        raw = self._read_chat_file(file_path)
+                        messages = parse_to_messages_with_timestamps(raw)
+                        chunks = _chunk_conversation(messages)
 
-                    # Remove old entries for this file/parts
+                        # Remove old entries for this file/parts
+                        for kw, docs in list(index_map.items()):
+                            for dkey in list(docs.keys()):
+                                if _is_part_of_file(dkey, file, client):
+                                    del docs[dkey]
+                            if not docs:
+                                del index_map[kw]
+
+                        for dkey in list(doc_lengths.keys()):
+                            if _is_part_of_file(dkey, file, client):
+                                del doc_lengths[dkey]
+
+                        # Add new entries for parts
+                        for p, chunk in enumerate(chunks, 1):
+                            part_file = _part_file_name(file, p)
+                            part_key = f"{client}/{part_file}"
+                            text = " ".join(_extract_msg_text(msg) for msg in chunk)
+                            tokens = _tokenize(text)
+                            counts = Counter(tokens)
+
+                            for kw, count in counts.items():
+                                index_map.setdefault(kw, {})[part_key] = count
+                            doc_lengths[part_key] = len(tokens)
+
+                        timestamps[doc_key_prefix] = mtime
+                        changed = True
+                except Exception as e:
+                    logger.warning("Failed to sync index for %s: %s", file, e)
+
+            # Remove deleted files
+            for doc_key_prefix in list(timestamps.keys()):
+                if doc_key_prefix.startswith(f"{client}/") and doc_key_prefix not in current_keys:
+                    del timestamps[doc_key_prefix]
+                    
+                    # Get the filename from doc_key_prefix
+                    file_name = doc_key_prefix.split("/", 1)[1]
+
+                    # Delete any parts as well
+                    for dkey in list(doc_lengths.keys()):
+                        if _is_part_of_file(dkey, file_name, client):
+                            del doc_lengths[dkey]
+
                     for kw, docs in list(index_map.items()):
                         for dkey in list(docs.keys()):
-                            if _is_part_of_file(dkey, file, client):
+                            if _is_part_of_file(dkey, file_name, client):
                                 del docs[dkey]
                         if not docs:
                             del index_map[kw]
-
-                    for dkey in list(doc_lengths.keys()):
-                        if _is_part_of_file(dkey, file, client):
-                            del doc_lengths[dkey]
-
-                    # Add new entries for parts
-                    for p, chunk in enumerate(chunks, 1):
-                        part_file = _part_file_name(file, p)
-                        part_key = f"{client}/{part_file}"
-                        text = " ".join(msg["text"] for msg in chunk)
-                        tokens = _tokenize(text)
-                        counts = Counter(tokens)
-
-                        for kw, count in counts.items():
-                            index_map.setdefault(kw, {})[part_key] = count
-                        doc_lengths[part_key] = len(tokens)
-
-                    timestamps[doc_key_prefix] = mtime
                     changed = True
-            except Exception:
-                pass
 
-        # Remove deleted files
-        for doc_key_prefix in list(timestamps.keys()):
-            if doc_key_prefix.startswith(f"{client}/") and doc_key_prefix not in current_keys:
-                del timestamps[doc_key_prefix]
-                
-                # Get the filename from doc_key_prefix
-                file_name = doc_key_prefix.split("/", 1)[1]
+            if changed:
+                self._write_json(self.serialized_index_path, index_data)
 
-                # Delete any parts as well
-                for dkey in list(doc_lengths.keys()):
-                    if _is_part_of_file(dkey, file_name, client):
-                        del doc_lengths[dkey]
-
-                for kw, docs in list(index_map.items()):
-                    for dkey in list(docs.keys()):
-                        if _is_part_of_file(dkey, file_name, client):
-                            del docs[dkey]
-                    if not docs:
-                        del index_map[kw]
-                changed = True
-
-        if changed:
-            self._write_json(self.serialized_index_path, index_data)
-
-        return index_data
+            return index_data
 
     def _list_json_files(self, client: str = "default") -> list[str]:
         chats_dir = self.resolve_chats_dir(client)
@@ -965,6 +1188,8 @@ class ChatConnector:
         self, page: int = 1, per_page: int = 50, client: str = "default"
     ) -> list[str]:
         try:
+            page = max(1, page)
+            per_page = max(1, per_page)
             files = self._list_json_files(client)
             if not files:
                 return ["No stored chats found."]
@@ -1034,19 +1259,25 @@ class ChatConnector:
                         if p.isdigit() and len(p) >= 9:
                             mtime = float(p)
                             break
+                parsed = _parse_part_file_name(file_name)
+                orig_file_name = parsed[0] if parsed else file_name
                 if mtime == 0.0:
-                    parsed = _parse_part_file_name(file_name)
                     if parsed:
-                        orig_file_name, _ = parsed
                         mtime = timestamps.get(f"{client}/{orig_file_name}", 0.0)
                     else:
                         mtime = timestamps.get(doc_key, 0.0)
+                if mtime == 0.0:
+                    try:
+                        chats_dir = self.resolve_chats_dir(client)
+                        disk_p = os.path.join(chats_dir, orig_file_name)
+                        if os.path.isfile(disk_p):
+                            mtime = os.path.getmtime(disk_p)
+                    except Exception:
+                        pass
 
                 half_life = 1.0 if is_receipt else 30.0
                 decayed_score = apply_temporal_decay(bm25_score, mtime, half_life_days=half_life)
                 if is_receipt:
-                    parsed = _parse_part_file_name(file_name)
-                    orig_file_name = parsed[0] if parsed else file_name
                     chats_dir = self.resolve_chats_dir(client)
                     receipt_file_path = os.path.join(chats_dir, orig_file_name)
                     if _is_receipt_stale(receipt_file_path, mtime, self.base_dir):
@@ -1134,7 +1365,7 @@ class ChatConnector:
                 chunks = _chunk_conversation(messages_with_ts)
                 if 1 <= part_num <= len(chunks):
                     chunk_msgs = chunks[part_num - 1]
-                    plain_messages = [msg["text"] for msg in chunk_msgs]
+                    plain_messages = [_extract_msg_text(msg) for msg in chunk_msgs]
                 else:
                     return f"Error: Part {part_num} not found. Total parts: {len(chunks)}."
             else:
@@ -1153,8 +1384,15 @@ class ChatConnector:
 
             if is_pruned:
                 pruned_messages = self._prune_transcript(plain_messages)
+                total_pruned = len(pruned_messages)
+                valid_start = max(1, start_msg)
+                valid_end = max(valid_start, end_msg)
+                if valid_start > total_pruned:
+                    return f"Requested start message ({start_msg}) exceeds pruned message count ({total_pruned})."
+                s_idx = valid_start - 1
+                e_idx = min(total_pruned, valid_end)
                 processed_messages = []
-                for msg in pruned_messages:
+                for msg in pruned_messages[s_idx:e_idx]:
                     prefix_match = re.match(r"^(U: |A: |System: )", msg)
                     prefix = prefix_match.group(0) if prefix_match else ""
                     content = msg[len(prefix):]
@@ -1167,14 +1405,20 @@ class ChatConnector:
                         )
                     processed_messages.append(prefix + content)
                 output = (
-                    f"--- Showing Pruned Historical Transcript (Age: {age_days:.1f} days, Threshold: {prune_threshold} days) ---\n"
+                    f"--- Showing Pruned Historical Transcript (Messages {valid_start} to {e_idx} of {total_pruned} preserved, Age: {age_days:.1f} days, Threshold: {prune_threshold} days) ---\n"
                     f"[Pruning active: Turn 1, code blocks, keyword lines, and Turn N preserved]\n\n"
                     + "\n".join(processed_messages)
                 )
                 return output
 
-            s_idx = max(0, start_msg - 1)
-            e_idx = min(total_msgs, end_msg)
+            valid_start = max(1, start_msg)
+            valid_end = max(valid_start, end_msg)
+
+            if valid_start > total_msgs:
+                return f"Requested start message ({start_msg}) exceeds total messages ({total_msgs})."
+
+            s_idx = valid_start - 1
+            e_idx = min(total_msgs, valid_end)
             processed_messages = []
             for msg in plain_messages[s_idx:e_idx]:
                 prefix_match = re.match(r"^(U: |A: |System: )", msg)
@@ -1189,7 +1433,7 @@ class ChatConnector:
                     )
                 processed_messages.append(prefix + content)
             output = (
-                f"--- Showing Messages {start_msg} to {e_idx} of {total_msgs} total messages ---\n"
+                f"--- Showing Messages {valid_start} to {e_idx} of {total_msgs} total messages ---\n"
                 f"[Token efficiency active: summarize_code={summarize_code}, max_msg_len={max_msg_len}]\n\n"
                 + "\n".join(processed_messages)
             )
@@ -1206,25 +1450,34 @@ class ChatConnector:
         force_save: bool = False,
         client: str = "default",
     ) -> str:
-        config = self.load_config()
-        threshold = config.get("auto_save_message_threshold", 20)
-        count = len(messages)
-        self._pending_session = {
-            "conversation_name": conversation_name,
-            "messages": messages,
-            "client": client,
-        }
-        if count < threshold and not force_save:
-            return f"Session not saved. Current count ({count}) is below threshold ({threshold})."
-        return self._persist_conversation(conversation_name, messages, client)
+        with self._lock:
+            config = self.load_config()
+            threshold = config.get("auto_save_message_threshold", 20)
+            count = len(messages)
+            self._pending_session = {
+                "conversation_name": conversation_name,
+                "messages": messages,
+                "client": client,
+            }
+            if count < threshold and not force_save:
+                return f"Session not saved. Current count ({count}) is below threshold ({threshold})."
+            return self._persist_conversation(conversation_name, messages, client)
 
     def _persist_conversation(self, conversation_name: str, messages: list[dict], client: str) -> str:
         safe_name = sanitize_filename(conversation_name)
         file_name = f"{safe_name}.json"
-        file_path = os.path.join(self.resolve_chats_dir(client), file_name)
+        chats_dir = self.resolve_chats_dir(client)
+        file_path = os.path.join(chats_dir, file_name)
+        abs_chats_dir = os.path.abspath(chats_dir)
+        abs_file_path = os.path.abspath(file_path)
+        try:
+            if os.path.commonpath([abs_file_path, abs_chats_dir]) != abs_chats_dir:
+                return "Error: Security block. Invalid conversation name destination."
+        except ValueError:
+            return "Error: Security block. Invalid conversation name destination."
         payload = {"title": conversation_name, "messages": messages, "saved_at": self._now_iso()}
         try:
-            self._write_json(file_path, payload)
+            self._write_json(abs_file_path, payload)
             self._pending_session = None
             self._update_file_index(file_name, client)
             return f"Successfully saved state to {file_name} ({len(messages)} messages logged)."
@@ -1237,24 +1490,25 @@ class ChatConnector:
     # ── High impact tools ───────────────────────────────────────────────────
 
     def delete_stored_chat(self, file_name: str, confirm: bool = False, client: str = "default") -> str:
-        if not confirm:
-            return "Deletion blocked. Set confirm=true to permanently delete the chat archive."
-        parsed = _parse_part_file_name(file_name)
-        if parsed:
-            orig_file_name, _ = parsed
-        else:
-            orig_file_name = file_name
-        file_path = self._safe_chat_path(orig_file_name, client)
-        if not file_path:
-            return "Error: Security block. Access denied."
-        if not os.path.exists(file_path):
-            return f"File {orig_file_name} not found."
-        try:
-            os.remove(file_path)
-            self._remove_file_from_index(orig_file_name, client)
-            return f"Deleted {os.path.basename(file_path)}."
-        except Exception as e:
-            return f"Delete error: {e}"
+        with self._lock:
+            if not confirm:
+                return "Deletion blocked. Set confirm=true to permanently delete the chat archive."
+            parsed = _parse_part_file_name(file_name)
+            if parsed:
+                orig_file_name, _ = parsed
+            else:
+                orig_file_name = file_name
+            file_path = self._safe_chat_path(orig_file_name, client)
+            if not file_path:
+                return "Error: Security block. Access denied."
+            if not os.path.exists(file_path):
+                return f"File {orig_file_name} not found."
+            try:
+                os.remove(file_path)
+                self._remove_file_from_index(orig_file_name, client)
+                return f"Deleted {os.path.basename(file_path)}."
+            except Exception as e:
+                return f"Delete error: {e}"
 
     def get_chat_metadata(self, file_name: str, client: str = "default") -> dict:
         parsed = _parse_part_file_name(file_name)
@@ -1284,25 +1538,57 @@ class ChatConnector:
     def merge_conversation_into_archive(
         self, file_name: str, new_messages: list[dict], client: str = "default"
     ) -> str:
-        parsed = _parse_part_file_name(file_name)
-        if parsed:
-            orig_file_name, _ = parsed
-        else:
-            orig_file_name = file_name
-        file_path = self._safe_chat_path(orig_file_name, client)
-        if not file_path:
-            return "Error: Security block. Access denied."
-        existing: dict = {"title": orig_file_name, "messages": []}
-        if os.path.exists(file_path):
-            existing = self._read_chat_file(file_path)
-            if not isinstance(existing, dict):
-                existing = {"title": orig_file_name, "messages": existing}
-        merged = existing.get("messages", []) + new_messages
-        existing["messages"] = merged
-        existing["merged_at"] = self._now_iso()
-        self._write_json(file_path, existing)
-        self._update_file_index(orig_file_name, client)
-        return f"Merged {len(new_messages)} messages into {os.path.basename(file_path)} (total: {len(merged)})."
+        with self._lock:
+            parsed = _parse_part_file_name(file_name)
+            if parsed:
+                orig_file_name, _ = parsed
+            else:
+                orig_file_name = file_name
+            file_path = self._safe_chat_path(orig_file_name, client)
+            if not file_path:
+                return "Error: Security block. Access denied."
+            existing: dict = {"title": orig_file_name, "messages": []}
+            if os.path.exists(file_path):
+                existing = self._read_chat_file(file_path)
+                if not isinstance(existing, dict):
+                    existing = {"title": orig_file_name, "messages": existing}
+            existing_msgs = existing.get("messages", [])
+            if not isinstance(existing_msgs, list):
+                existing_msgs = []
+
+            def _msg_fingerprint(m: Any) -> str:
+                if not isinstance(m, dict):
+                    return str(m)
+                author = m.get("author")
+                author_role = author.get("role") if isinstance(author, dict) else (author if isinstance(author, str) else None)
+                role = m.get("role") or m.get("sender") or author_role or ""
+                content = m.get("content") or m.get("text") or ""
+                ts = m.get("timestamp") or m.get("created_at") or m.get("create_time") or ""
+                if isinstance(content, list):
+                    content = str([(p.get("text") if isinstance(p, dict) else str(p)) for p in content])
+                return f"{role}::{content}::{ts}"
+
+            seen_fingerprints = set()
+            deduped_existing = []
+            for m in existing_msgs:
+                fp = _msg_fingerprint(m)
+                if fp not in seen_fingerprints:
+                    seen_fingerprints.add(fp)
+                    deduped_existing.append(m)
+
+            novel_messages = []
+            for m in new_messages:
+                fp = _msg_fingerprint(m)
+                if fp not in seen_fingerprints:
+                    seen_fingerprints.add(fp)
+                    novel_messages.append(m)
+
+            merged = deduped_existing + novel_messages
+            existing["messages"] = merged
+            existing["merged_at"] = self._now_iso()
+            self._write_json(file_path, existing)
+            self._update_file_index(orig_file_name, client)
+            return f"Merged {len(novel_messages)} messages into {os.path.basename(file_path)} (total: {len(merged)})."
 
     def export_chat_as_markdown(
         self, file_name: str, output_name: str | None = None, client: str = "default"
@@ -1319,8 +1605,29 @@ class ChatConnector:
             raw = self._read_chat_file(file_path)
             title = raw.get("title", os.path.splitext(orig_file_name)[0]) if isinstance(raw, dict) else orig_file_name
             plain = parse_to_plain_text(raw)
-            md_name = output_name or f"{os.path.splitext(os.path.basename(orig_file_name))[0]}.md"
-            md_path = os.path.join(self.exports_dir, os.path.basename(md_name))
+            if output_name:
+                clean_name = sanitize_filename(os.path.basename(output_name.replace("\\", "/")))
+                md_name = clean_name if clean_name.endswith(".md") else f"{clean_name}.md"
+            else:
+                stem = sanitize_filename(os.path.splitext(os.path.basename(orig_file_name))[0])
+                md_name = f"{stem}.md"
+            abs_exports = os.path.abspath(self.exports_dir)
+            md_path = os.path.abspath(os.path.join(abs_exports, md_name))
+            try:
+                if os.path.commonpath([md_path, abs_exports]) != abs_exports:
+                    return "Error: Security block. Invalid export destination path."
+            except ValueError:
+                return "Error: Security block. Invalid export destination path."
+            real_exports = os.path.realpath(self.exports_dir)
+            real_md_path = os.path.realpath(md_path)
+            try:
+                if os.path.islink(md_path) or os.path.commonpath([real_md_path, real_exports]) != real_exports:
+                    if os.path.islink(md_path):
+                        os.unlink(md_path)
+                    elif os.path.commonpath([real_md_path, real_exports]) != real_exports:
+                        return "Error: Security block. Invalid export destination path."
+            except ValueError:
+                return "Error: Security block. Invalid export destination path."
             lines = [f"# {title}", "", f"_Exported: {self._now_iso()}_", ""]
             for msg in plain:
                 if msg.startswith("U: "):
@@ -1329,8 +1636,20 @@ class ChatConnector:
                     lines += ["## Assistant", "", msg[3:], ""]
                 else:
                     lines += ["## System", "", msg.split(": ", 1)[-1], ""]
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
+            fd, tmp_export = tempfile.mkstemp(dir=abs_exports, prefix=".tmp_export_", suffix=".md")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines))
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_export, md_path)
+            except Exception:
+                if os.path.exists(tmp_export):
+                    try:
+                        os.remove(tmp_export)
+                    except OSError:
+                        pass
+                raise
             return f"Exported markdown to exports/{os.path.basename(md_path)} ({len(plain)} messages)."
         except Exception as e:
             return f"Export error: {e}"
@@ -1372,19 +1691,25 @@ class ChatConnector:
                     if p.isdigit() and len(p) >= 9:
                         mtime = float(p)
                         break
+            parsed = _parse_part_file_name(part_file)
+            orig_file_name = parsed[0] if parsed else part_file
             if mtime == 0.0:
-                parsed = _parse_part_file_name(part_file)
                 if parsed:
-                    orig_file_name, _ = parsed
                     mtime = timestamps.get(f"{client}/{orig_file_name}", 0.0)
                 else:
                     mtime = timestamps.get(doc_key, 0.0)
+            if mtime == 0.0:
+                try:
+                    chats_dir = self.resolve_chats_dir(client)
+                    disk_p = os.path.join(chats_dir, orig_file_name)
+                    if os.path.isfile(disk_p):
+                        mtime = os.path.getmtime(disk_p)
+                except Exception:
+                    pass
 
             half_life = 1.0 if is_receipt else 30.0
             decayed_score = apply_temporal_decay(bm25_score, mtime, half_life_days=half_life)
             if is_receipt:
-                parsed = _parse_part_file_name(part_file)
-                orig_file_name = parsed[0] if parsed else part_file
                 chats_dir = self.resolve_chats_dir(client)
                 receipt_file_path = os.path.join(chats_dir, orig_file_name)
                 if _is_receipt_stale(receipt_file_path, mtime, self.base_dir):
@@ -1480,7 +1805,32 @@ class ChatConnector:
             return [{"file": f"File {file_name} not found.", "score": 0}]
         try:
             raw = self._read_chat_file(file_path)
-            query = " ".join(parse_to_plain_text(raw))
+            plain_msgs = parse_to_plain_text(raw)
+            if not plain_msgs:
+                return [{"file": "No content found to match related chats.", "score": 0.0}]
+
+            stop_words = {
+                "the", "and", "to", "of", "a", "in", "is", "it", "you", "that", "he", "was",
+                "for", "on", "are", "as", "with", "his", "they", "i", "at", "be", "this",
+                "have", "from", "or", "one", "had", "by", "word", "but", "not", "what",
+                "all", "were", "we", "when", "your", "can", "said", "there", "use", "an",
+                "each", "which", "she", "do", "how", "their", "if", "will", "up", "other",
+                "about", "out", "many", "then", "them", "these", "so", "some", "her", "would",
+                "make", "like", "him", "into", "time", "has", "look", "two", "more", "write",
+                "go", "see", "number", "no", "way", "could", "people", "my", "than", "first",
+                "water", "been", "call", "who", "oil", "its", "now", "find", "long", "down",
+                "day", "did", "get", "come", "made", "may", "part"
+            }
+            all_text = " ".join(plain_msgs)
+            tokens = _tokenize(all_text)
+            salient_tokens = [t for t in tokens if len(t) > 2 and t not in stop_words]
+            if salient_tokens:
+                counts = Counter(salient_tokens)
+                top_terms = [term for term, _ in counts.most_common(25)]
+                query = " ".join(top_terms)
+            else:
+                query = " ".join(tokens[:50])
+
             results = self.search_chats_semantic(query, top_k=top_k + 5, client=client)
             
             filtered_results = []
@@ -1507,11 +1857,26 @@ class ChatConnector:
         chats_dir = self.resolve_chats_dir(client)
         for file in self._list_json_files(client):
             path = os.path.join(chats_dir, file)
-            mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
-            if start <= mtime <= end:
+            file_ts = None
+            try:
+                raw = self._read_chat_file(path)
+                if isinstance(raw, dict):
+                    ts_val = raw.get("saved_at") or raw.get("imported_at") or raw.get("synced_at")
+                    if ts_val:
+                        parsed_t = _parse_timestamp(ts_val)
+                        if parsed_t:
+                            file_ts = datetime.fromtimestamp(parsed_t, tz=timezone.utc)
+            except Exception:
+                pass
+            if not file_ts:
+                try:
+                    file_ts = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
+                except OSError:
+                    continue
+            if start <= file_ts <= end:
                 results.append({
                     "file_name": file,
-                    "last_modified": mtime.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "last_modified": file_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 })
         if not results:
             return [{"info": "No chats found in date range."}]
@@ -1528,58 +1893,64 @@ class ChatConnector:
     def register_session_for_auto_save(
         self, conversation_name: str, messages: list[dict], client: str = "default"
     ) -> str:
-        self._pending_session = {
-            "conversation_name": conversation_name,
-            "messages": messages,
-            "client": client,
-        }
-        return f"Session '{conversation_name}' registered ({len(messages)} messages pending auto-save)."
+        with self._lock:
+            self._pending_session = {
+                "conversation_name": conversation_name,
+                "messages": messages,
+                "client": client,
+            }
+            return f"Session '{conversation_name}' registered ({len(messages)} messages pending auto-save)."
 
     def trigger_auto_save_on_session_end(self) -> str:
-        if not self._pending_session:
-            return "No pending session to auto-save."
-        session = self._pending_session
-        return self._persist_conversation(
-            session["conversation_name"], session["messages"], session.get("client", "default")
-        )
+        with self._lock:
+            if not self._pending_session:
+                return "No pending session to auto-save."
+            session = self._pending_session
+            return self._persist_conversation(
+                session["conversation_name"], session["messages"], session.get("client", "default")
+            )
 
     def watch_chats_folder(self, client: str = "default") -> dict:
-        chats_dir = self.resolve_chats_dir(client)
-        current: dict[str, float] = {}
-        for file in self._list_json_files(client):
-            path = os.path.join(chats_dir, file)
-            current[file] = os.path.getmtime(path)
-        previous: dict[str, float] = {}
-        if os.path.exists(self.watch_state_path):
-            try:
-                with open(self.watch_state_path, "r", encoding="utf-8") as f:
-                    previous = json.load(f).get(client, {})
-            except Exception:
-                previous = {}
-        new_files = [f for f in current if f not in previous]
-        modified = [f for f in current if f in previous and current[f] != previous[f]]
-        deleted = [f for f in previous if f not in current]
-        all_states = {}
-        if os.path.exists(self.watch_state_path):
-            try:
-                with open(self.watch_state_path, "r", encoding="utf-8") as f:
-                    all_states = json.load(f)
-            except Exception:
-                pass
-        all_states[client] = current
-        self._write_json(self.watch_state_path, all_states)
-        return {
-            "new_files": new_files,
-            "modified_files": modified,
-            "deleted_files": deleted,
-            "total_tracked": len(current),
-        }
+        with self._lock:
+            chats_dir = self.resolve_chats_dir(client)
+            current: dict[str, float] = {}
+            for file in self._list_json_files(client):
+                path = os.path.join(chats_dir, file)
+                current[file] = os.path.getmtime(path)
+            previous: dict[str, float] = {}
+            if os.path.exists(self.watch_state_path):
+                try:
+                    with open(self.watch_state_path, "r", encoding="utf-8") as f:
+                        previous = json.load(f).get(client, {})
+                except Exception as e:
+                    logger.debug("Failed reading previous watch state: %s", e)
+                    previous = {}
+            new_files = [f for f in current if f not in previous]
+            modified = [f for f in current if f in previous and current[f] != previous[f]]
+            deleted = [f for f in previous if f not in current]
+            all_states = {}
+            if os.path.exists(self.watch_state_path):
+                try:
+                    with open(self.watch_state_path, "r", encoding="utf-8") as f:
+                        all_states = json.load(f)
+                except Exception as e:
+                    logger.debug("Failed reading all watch states: %s", e)
+            all_states[client] = current
+            self._write_json(self.watch_state_path, all_states)
+            return {
+                "new_files": new_files,
+                "modified_files": modified,
+                "deleted_files": deleted,
+                "total_tracked": len(current),
+            }
 
     def import_chat_from_content(
         self, title: str, content: str | dict | list, client: str = "default"
     ) -> str:
         try:
             if isinstance(content, str):
+                if len(content.encode("utf-8")) > MAX_FILE_SIZE:
+                    return f"Error: Content exceeds maximum allowed size ({MAX_FILE_SIZE // (1024*1024)}MB)."
                 data = json.loads(content)
             else:
                 data = content
@@ -1590,9 +1961,25 @@ class ChatConnector:
             elif isinstance(data, dict) and "title" not in data:
                 data["title"] = title
             safe = sanitize_filename(title)
-            path = os.path.join(self.resolve_chats_dir(client), f"{safe}.json")
+            chats_dir = self.resolve_chats_dir(client)
+            path = os.path.join(chats_dir, f"{safe}.json")
+            abs_chats_dir = os.path.abspath(chats_dir)
+            abs_path = os.path.abspath(path)
+            try:
+                if os.path.commonpath([abs_path, abs_chats_dir]) != abs_chats_dir:
+                    return "Error: Security block. Invalid import path."
+            except ValueError:
+                return "Error: Security block. Invalid import path."
+            if os.path.islink(abs_path):
+                real_p = os.path.realpath(abs_path)
+                real_cd = os.path.realpath(abs_chats_dir)
+                try:
+                    if os.path.commonpath([real_p, real_cd]) != real_cd:
+                        return "Error: Security block. Invalid import path."
+                except ValueError:
+                    return "Error: Security block. Invalid import path."
             data["imported_at"] = self._now_iso()
-            self._write_json(path, data)
+            self._write_json(abs_path, data)
             self._update_file_index(f"{safe}.json", client)
             return f"Imported chat as {safe}.json ({len(parse_to_plain_text(data))} messages)."
         except Exception as e:
@@ -1601,10 +1988,39 @@ class ChatConnector:
     def import_chat_from_local_path(self, source_path: str, title: str | None = None, client: str = "default") -> str:
         if not os.path.exists(source_path):
             return f"Source path not found: {source_path}"
+        real_source = os.path.realpath(source_path)
+        allowed_roots = [
+            os.path.realpath(self.base_dir),
+            os.path.realpath(os.getcwd()),
+            os.path.realpath(tempfile.gettempdir()),
+            os.path.realpath(get_default_base_dir()),
+        ]
+        config = self.load_config()
+        for t_dir in config.get("transcripts_dirs", {}).values():
+            if t_dir and isinstance(t_dir, str):
+                allowed_roots.append(os.path.realpath(t_dir))
+        if self.cursor_transcripts_dir:
+            allowed_roots.append(os.path.realpath(self.cursor_transcripts_dir))
+
+        is_allowed = False
+        for root in allowed_roots:
+            try:
+                if os.path.commonpath([real_source, root]) == root:
+                    is_allowed = True
+                    break
+            except ValueError:
+                continue
+
+        if not is_allowed:
+            return f"Error: Access denied. Source path outside allowed workspace boundaries: {source_path}"
+
+        if os.path.getsize(real_source) > MAX_FILE_SIZE:
+            return f"Error: Source file exceeds maximum allowed size (50MB): {source_path}"
+
         try:
-            with open(source_path, "r", encoding="utf-8") as f:
+            with open(real_source, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            chat_title = title or os.path.splitext(os.path.basename(source_path))[0]
+            chat_title = title or os.path.splitext(os.path.basename(real_source))[0]
             return self.import_chat_from_content(chat_title, data, client)
         except Exception as e:
             return f"Import error: {e}"
@@ -1614,7 +2030,35 @@ class ChatConnector:
     ) -> dict:
         config = self.load_config()
         if source_dir:
-            src_dir = source_dir
+            if not isinstance(source_dir, str) or "\x00" in source_dir:
+                return {"error": "Invalid source directory.", "imported": []}
+            real_source_dir = os.path.realpath(source_dir)
+            allowed_roots = [
+                os.path.realpath(self.base_dir),
+                os.path.realpath(os.getcwd()),
+                os.path.realpath(tempfile.gettempdir()),
+                os.path.realpath(get_default_base_dir()),
+            ]
+            for t_dir in config.get("transcripts_dirs", {}).values():
+                if t_dir and isinstance(t_dir, str):
+                    allowed_roots.append(os.path.realpath(t_dir))
+            if self.cursor_transcripts_dir:
+                allowed_roots.append(os.path.realpath(self.cursor_transcripts_dir))
+
+            is_allowed = False
+            for root in allowed_roots:
+                try:
+                    if os.path.commonpath([real_source_dir, root]) == root:
+                        is_allowed = True
+                        break
+                except ValueError:
+                    continue
+            if not is_allowed:
+                return {
+                    "error": f"Error: Access denied. Source directory outside allowed workspace boundaries: {source_dir}",
+                    "imported": [],
+                }
+            src_dir = real_source_dir
         else:
             src_dir = config.get("transcripts_dirs", {}).get(client) or resolve_default_transcripts_dir(client)
         if not os.path.isdir(src_dir):
@@ -1634,14 +2078,24 @@ class ChatConnector:
             return {"error": f"Failed to list transcripts: {e}", "imported": []}
         for file in candidates:
             src_path = os.path.join(src_dir, file)
+            if not os.path.isfile(src_path) or os.path.getsize(src_path) > MAX_FILE_SIZE:
+                continue
             try:
                 messages = parse_external_transcript(src_path)
                 if not messages:
                     continue
                 title = f"{client}_{os.path.splitext(file)[0][:40]}"
                 dest_name = sanitize_filename(title)
-                dest = os.path.join(self.resolve_chats_dir(client), f"{dest_name}.json")
-                if os.path.exists(dest):
+                chats_dir = self.resolve_chats_dir(client)
+                dest = os.path.join(chats_dir, f"{dest_name}.json")
+                abs_chats_dir = os.path.abspath(chats_dir)
+                abs_dest = os.path.abspath(dest)
+                try:
+                    if os.path.commonpath([abs_dest, abs_chats_dir]) != abs_chats_dir:
+                        continue
+                except ValueError:
+                    continue
+                if os.path.exists(abs_dest):
                     imported.append({"file": file, "status": "skipped_exists"})
                     continue
                 payload = {
@@ -1650,7 +2104,7 @@ class ChatConnector:
                     "source": f"{client}_agent_transcript",
                     "synced_at": self._now_iso(),
                 }
-                self._write_json(dest, payload)
+                self._write_json(abs_dest, payload)
                 self._update_file_index(f"{dest_name}.json", client)
                 imported.append({
                     "file": file,
@@ -1796,10 +2250,39 @@ class ChatConnector:
                 *[f"- {a}" for a in actions if not a.startswith("No action") and not a.startswith("File")],
                 "",
             ]
-        brief_path = os.path.join(self.exports_dir, f"{sanitize_filename(brief_title)}.md")
+        safe_brief_title = sanitize_filename(brief_title) or "Project_Brief"
+        abs_exports = os.path.abspath(self.exports_dir)
+        brief_path = os.path.abspath(os.path.join(abs_exports, f"{safe_brief_title}.md"))
+        try:
+            if os.path.commonpath([brief_path, abs_exports]) != abs_exports:
+                return "Error: Security block. Invalid brief destination path."
+        except ValueError:
+            return "Error: Security block. Invalid brief destination path."
+        real_exports = os.path.realpath(self.exports_dir)
+        real_brief_path = os.path.realpath(brief_path)
+        try:
+            if os.path.islink(brief_path) or os.path.commonpath([real_brief_path, real_exports]) != real_exports:
+                if os.path.islink(brief_path):
+                    os.unlink(brief_path)
+                elif os.path.commonpath([real_brief_path, real_exports]) != real_exports:
+                    return "Error: Security block. Invalid brief destination path."
+        except ValueError:
+            return "Error: Security block. Invalid brief destination path."
         text = "\n".join(sections)
-        with open(brief_path, "w", encoding="utf-8") as f:
-            f.write(text)
+        fd, tmp_brief = tempfile.mkstemp(dir=abs_exports, prefix=".tmp_brief_", suffix=".md")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_brief, brief_path)
+        except Exception:
+            if os.path.exists(tmp_brief):
+                try:
+                    os.remove(tmp_brief)
+                except OSError:
+                    pass
+            raise
         return f"Brief written to exports/{os.path.basename(brief_path)} ({len(file_names)} chats combined)."
 
     # ── Config and ops ──────────────────────────────────────────────────────
@@ -1816,57 +2299,96 @@ class ChatConnector:
         updates = {k: v for k, v in settings.items() if k in allowed}
         if not updates:
             return f"No valid settings provided. Allowed keys: {sorted(allowed)}"
+
+        if "client_paths" in updates:
+            if not isinstance(updates["client_paths"], dict):
+                return "Error: client_paths must be a dictionary mapping client names to relative paths."
+            clean_client_paths = {}
+            abs_base = os.path.abspath(self.base_dir)
+            for c_name, c_path in updates["client_paths"].items():
+                if not isinstance(c_name, str) or not re.match(r"^[a-zA-Z0-9_-]+$", c_name):
+                    continue
+                if not isinstance(c_path, str):
+                    continue
+                if c_path.startswith("/") or c_path.startswith("\\") or ":" in c_path:
+                    continue
+                norm = c_path.replace("\\", "/").strip("/")
+                if ".." in norm.split("/"):
+                    continue
+                target = os.path.abspath(os.path.join(abs_base, norm))
+                try:
+                    if os.path.commonpath([target, abs_base]) == abs_base:
+                        clean_client_paths[c_name] = norm
+                except ValueError:
+                    continue
+            updates["client_paths"] = clean_client_paths
+
+        for num_key in ("auto_save_message_threshold", "compression_days_threshold", "summary_pruning_days_threshold"):
+            if num_key in updates:
+                val = updates[num_key]
+                if not isinstance(val, int) or val <= 0:
+                    del updates[num_key]
+
+        if not updates:
+            return "No valid settings could be applied after validation."
+
         self.save_config(updates)
         return f"Updated settings: {list(updates.keys())}"
 
     def compress_old_chat_archives(self, days_old: int | None = None, client: str = "default") -> dict:
-        config = self.load_config()
-        threshold_days = days_old or config.get("compression_days_threshold", 30)
-        cutoff = datetime.now(timezone.utc).timestamp() - (threshold_days * 86400)
-        chats_dir = self.resolve_chats_dir(client)
-        compressed = []
-        skipped = []
-        for file in self._list_json_files(client):
-            if file.endswith(".gz"):
-                continue
-            path = os.path.join(chats_dir, file)
-            if os.path.getmtime(path) < cutoff:
-                gz_path = path + ".gz"
-                with open(path, "rb") as f_in:
-                    with gzip.open(gz_path, "wb") as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                os.remove(path)
-                compressed.append(file)
-            else:
-                skipped.append(file)
-        return {
-            "compressed": compressed,
-            "skipped_recent": len(skipped),
-            "days_threshold": threshold_days,
-        }
+        with self._lock:
+            config = self.load_config()
+            threshold_days = days_old or config.get("compression_days_threshold", 30)
+            cutoff = datetime.now(timezone.utc).timestamp() - (threshold_days * 86400)
+            chats_dir = self.resolve_chats_dir(client)
+            compressed = []
+            skipped = []
+            for file in self._list_json_files(client):
+                if file.endswith(".gz") or file.startswith("handoff_") or file.startswith("handoff_receipt"):
+                    continue
+                path = os.path.join(chats_dir, file)
+                if os.path.getmtime(path) < cutoff:
+                    gz_path = path + ".gz"
+                    with open(path, "rb") as f_in:
+                        with gzip.open(gz_path, "wb") as f_out:
+                            shutil.copyfileobj(f_in, f_out)
+                    os.remove(path)
+                    compressed.append(file)
+                else:
+                    skipped.append(file)
+            return {
+                "compressed": compressed,
+                "skipped_recent": len(skipped),
+                "days_threshold": threshold_days,
+            }
 
     def deduplicate_stored_chats(self, dry_run: bool = True, client: str = "default") -> dict:
-        chats_dir = self.resolve_chats_dir(client)
-        hashes: dict[str, str] = {}
-        duplicates: list[dict] = []
-        for file in self._list_json_files(client):
-            path = os.path.join(chats_dir, file)
-            try:
-                with open(path, "rb") as f:
-                    digest = hashlib.sha256(f.read()).hexdigest()
-                if digest in hashes:
-                    duplicates.append({"file": file, "duplicate_of": hashes[digest]})
-                    if not dry_run:
-                        os.remove(path)
-                else:
-                    hashes[digest] = file
-            except Exception as e:
-                duplicates.append({"file": file, "error": str(e)})
-        return {
-            "dry_run": dry_run,
-            "duplicates": duplicates,
-            "unique_count": len(hashes),
-        }
+        with self._lock:
+            chats_dir = self.resolve_chats_dir(client)
+            hashes: dict[str, str] = {}
+            duplicates: list[dict] = []
+            for file in self._list_json_files(client):
+                path = os.path.join(chats_dir, file)
+                try:
+                    hasher = hashlib.sha256()
+                    with open(path, "rb") as f:
+                        while chunk := f.read(65536):
+                            hasher.update(chunk)
+                    digest = hasher.hexdigest()
+                    if digest in hashes:
+                        duplicates.append({"file": file, "duplicate_of": hashes[digest]})
+                        if not dry_run:
+                            os.remove(path)
+                            self._remove_file_from_index(file, client)
+                    else:
+                        hashes[digest] = file
+                except Exception as e:
+                    duplicates.append({"file": file, "error": str(e)})
+            return {
+                "dry_run": dry_run,
+                "duplicates": duplicates,
+                "unique_count": len(hashes),
+            }
 
     def get_server_capabilities(self) -> dict:
         return {
@@ -2082,87 +2604,88 @@ class ChatConnector:
         receipt_id: str | None = None,
         client: str = "default",
     ) -> str:
-        import time
-        import json
-        import hashlib
-        
-        chats_dir = self.resolve_chats_dir(client)
-        os.makedirs(chats_dir, exist_ok=True)
-        
-        timestamp = int(time.time())
-        workspace_hash = hashlib.md5(self.base_dir.encode("utf-8")).hexdigest()[:8]
-        if not receipt_id:
-            receipt_id = f"{workspace_hash}_{timestamp}"
+        with self._lock:
+            import time
+            import json
+            import hashlib
             
-        file_name = f"handoff_{timestamp}_{workspace_hash}.json"
-        file_path = os.path.join(chats_dir, file_name)
-        
-        touched_str = "\n".join(
-            f"- {s.get('file_path', '')}: {s.get('summary', '')} ({s.get('why', '')})"
-            for s in work_state.get('touched_surfaces', [])
-        )
-        checks_list = []
-        for c in evidence.get('checks_run', []):
-            checks_list.append(f"{c.get('command', '')} (exit: {c.get('exit_code', '')}): {c.get('stdout_summary', '')}")
-        checks_str = "\n".join(checks_list)
-        missing_evidence_str = ", ".join(evidence.get('missing_evidence', []))
-        dependencies_str = ", ".join(work_state.get('dependencies', []))
-        stale_if_str = ", ".join(
-            f"{s.get('file_path', s.get('glob_pattern', ''))}"
-            for s in invalidation.get('stale_if', [])
-        )
-        
-        closure_str = ""
-        if closure:
-            closure_str = (
-                f"\nClosure:\n"
-                f"- Closed By: {closure.get('closed_by', '')}\n"
-                f"- Closed At: {closure.get('closed_at', '')}\n"
-                f"- Closure Basis: {closure.get('closure_basis', '')}\n"
-                f"- Closure Evidence: {closure.get('closure_evidence', '')}\n"
+            chats_dir = self.resolve_chats_dir(client)
+            os.makedirs(chats_dir, exist_ok=True)
+            
+            now_ts = time.time()
+            timestamp_int = int(now_ts)
+            workspace_hash = hashlib.md5(self.base_dir.encode("utf-8")).hexdigest()[:8]
+            if not receipt_id:
+                receipt_id = f"{workspace_hash}_{timestamp_int}"
+                
+            file_name = f"handoff_{timestamp_int}_{workspace_hash}.json"
+            file_path = os.path.join(chats_dir, file_name)
+            
+            touched_str = "\n".join(
+                f"- {s.get('file_path', '')}: {s.get('summary', '')} ({s.get('why', '')})"
+                for s in work_state.get('touched_surfaces', [])
             )
-
-        receipt_text = (
-            f"Handoff Receipt {receipt_id}\n"
-            f"Status: {status}\n"
-            f"Supersedes: {supersedes or 'None'}\n"
-            f"Promise: {obligations.get('promise', '')}\n"
-            f"Scope: {', '.join(obligations.get('scope', []))}\n"
-            f"Touched Surfaces:\n{touched_str}\n"
-            f"Dependencies: {dependencies_str}\n"
-            f"Checks Run:\n{checks_str}\n"
-            f"Missing Evidence: {missing_evidence_str}\n"
-            f"Stale If: {stale_if_str}\n"
-            f"Next Safe Action: {invalidation.get('next_safe_action', '')}"
-            f"{closure_str}"
-        )
-        
-        receipt_data = {
-            "receipt_id": receipt_id,
-            "supersedes": supersedes,
-            "status": status,
-            "obligations": obligations,
-            "work_state": work_state,
-            "evidence": evidence,
-            "closure": closure or {},
-            "invalidation": invalidation,
-            "timestamp": timestamp,
-            "messages": [
-                {
-                    "role": "assistant",
-                    "text": receipt_text,
-                    "timestamp": timestamp
-                }
-            ]
-        }
-        
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(receipt_data, f, indent=2)
+            checks_list = []
+            for c in evidence.get('checks_run', []):
+                checks_list.append(f"{c.get('command', '')} (exit: {c.get('exit_code', '')}): {c.get('stdout_summary', '')}")
+            checks_str = "\n".join(checks_list)
+            missing_evidence_str = ", ".join(evidence.get('missing_evidence', []))
+            dependencies_str = ", ".join(work_state.get('dependencies', []))
+            stale_if_str = ", ".join(
+                f"{s.get('file_path', s.get('glob_pattern', ''))}"
+                for s in invalidation.get('stale_if', [])
+            )
             
-        # Trigger index sync to immediately index the new handoff receipt
-        self._sync_serialized_index(client)
-        
-        return f"Handoff receipt saved successfully to {file_name}"
+            closure_str = ""
+            if closure:
+                closure_str = (
+                    f"\nClosure:\n"
+                    f"- Closed By: {closure.get('closed_by', '')}\n"
+                    f"- Closed At: {closure.get('closed_at', '')}\n"
+                    f"- Closure Basis: {closure.get('closure_basis', '')}\n"
+                    f"- Closure Evidence: {closure.get('closure_evidence', '')}\n"
+                )
+
+            receipt_text = (
+                f"Handoff Receipt {receipt_id}\n"
+                f"Status: {status}\n"
+                f"Supersedes: {supersedes or 'None'}\n"
+                f"Promise: {obligations.get('promise', '')}\n"
+                f"Scope: {', '.join(obligations.get('scope', []))}\n"
+                f"Touched Surfaces:\n{touched_str}\n"
+                f"Dependencies: {dependencies_str}\n"
+                f"Checks Run:\n{checks_str}\n"
+                f"Missing Evidence: {missing_evidence_str}\n"
+                f"Stale If: {stale_if_str}\n"
+                f"Next Safe Action: {invalidation.get('next_safe_action', '')}"
+                f"{closure_str}"
+            )
+            
+            receipt_data = {
+                "receipt_id": receipt_id,
+                "supersedes": supersedes,
+                "status": status,
+                "obligations": obligations,
+                "work_state": work_state,
+                "evidence": evidence,
+                "closure": closure or {},
+                "invalidation": invalidation,
+                "timestamp": now_ts,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "text": receipt_text,
+                        "timestamp": now_ts
+                    }
+                ]
+            }
+            
+            self._write_json(file_path, receipt_data)
+                
+            # Trigger index sync to immediately index the new handoff receipt
+            self._sync_serialized_index(client)
+            
+            return f"Handoff receipt saved successfully to {file_name}"
 
     def get_workspace_handoff_state(self, client: str = "default") -> dict:
         import os
@@ -2188,9 +2711,10 @@ class ChatConnector:
                             data = _resolve_active_receipt(data, self.base_dir)
                             rid = data.get("receipt_id")
                             if rid:
+                                parsed_ts = _parse_timestamp(data.get("timestamp")) or 0.0
                                 receipts[rid] = {
                                     "data": data,
-                                    "timestamp": data.get("timestamp", 0),
+                                    "timestamp": parsed_ts,
                                     "file_name": fname
                                 }
                     except Exception:
@@ -2202,43 +2726,80 @@ class ChatConnector:
         sorted_receipts = sorted(receipts.values(), key=lambda x: x["timestamp"], reverse=True)
         newest_receipt = sorted_receipts[0]
         
+        # Build active chain starting from the newest receipt
         active_chain = []
         curr = newest_receipt["data"]
         visited = set()
-        
-        blocked = False
-        blocked_by_receipt = None
-        
         while curr:
             curr_id = curr.get("receipt_id")
             if not curr_id or curr_id in visited:
                 break
             visited.add(curr_id)
             active_chain.append(curr_id)
-            
-            closure = curr.get("closure") or {}
-            is_closed = (
-                curr.get("status") == "closed" and 
-                closure.get("closed_by") and 
-                closure.get("closed_at") and 
-                closure.get("closure_basis")
-            )
-            if not is_closed:
-                blocked = True
-                blocked_by_receipt = curr_id
-                
             parent_id = curr.get("supersedes")
-            if parent_id and parent_id in receipts:
-                curr = receipts[parent_id]["data"]
-            else:
-                curr = None
-                
+            curr = receipts[parent_id]["data"] if parent_id and parent_id in receipts else None
+
+        # Determine blocked status across all leaf receipts (receipts not superseded by any newer receipt)
+        superseded_ids = {
+            r["data"].get("supersedes") for r in receipts.values() if r["data"].get("supersedes")
+        }
+        leaf_receipts = [r for rid, r in receipts.items() if rid not in superseded_ids]
+        leaf_receipts.sort(key=lambda x: x["timestamp"], reverse=True)
+
+        blocked = False
+        blocked_by_receipt = None
+        blocker_receipt_data = None
+
+        for leaf in leaf_receipts:
+            curr = leaf["data"]
+            leaf_visited = set()
+            leaf_blocked = False
+            leaf_blocker = None
+            leaf_blocker_data = None
+
+            while curr:
+                cid = curr.get("receipt_id")
+                if not cid or cid in leaf_visited:
+                    break
+                leaf_visited.add(cid)
+
+                closure = curr.get("closure") or {}
+                is_closed = (
+                    curr.get("status") == "closed" and 
+                    closure.get("closed_by") and 
+                    closure.get("closed_at") and 
+                    closure.get("closure_basis")
+                )
+                if is_closed:
+                    break
+                else:
+                    leaf_blocked = True
+                    if leaf_blocker is None:
+                        leaf_blocker = cid
+                        leaf_blocker_data = curr
+
+                parent_id = curr.get("supersedes")
+                curr = receipts[parent_id]["data"] if parent_id and parent_id in receipts else None
+
+            if leaf_blocked:
+                blocked = True
+                if blocked_by_receipt is None:
+                    blocked_by_receipt = leaf_blocker
+                    blocker_receipt_data = leaf_blocker_data
+
+        next_action = None
+        if blocked:
+            target_data = blocker_receipt_data or newest_receipt["data"]
+            next_action = target_data.get("invalidation", {}).get("next_safe_action")
+            if not next_action:
+                next_action = newest_receipt["data"].get("invalidation", {}).get("next_safe_action")
+
         return {
             "blocked": blocked,
             "blocked_by_receipt": blocked_by_receipt,
             "active_chain": active_chain,
             "newest_receipt_id": newest_receipt["data"].get("receipt_id"),
-            "next_safe_action": newest_receipt["data"].get("invalidation", {}).get("next_safe_action") if blocked else None
+            "next_safe_action": next_action,
         }
 
 

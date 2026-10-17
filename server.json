@@ -6,13 +6,13 @@
     "url": "https://github.com/Leviathan0x0/Chronicle-MCP",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "1.6.0",
   "license": "MIT",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "chronicle-mcp-server",
-      "version": "1.0.0",
+      "version": "1.6.0",
       "transport": {
         "type": "stdio"
       },

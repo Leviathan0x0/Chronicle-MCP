@@ -1,12 +1,17 @@
 """Tests for Universal Chat Connector - all feature categories."""
 
+import concurrent.futures
 import json
 import os
+from pathlib import Path
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
+import cli
 from chat_core import ChatConnector, parse_to_plain_text
+
 
 
 class ChatConnectorTests(unittest.TestCase):
@@ -458,10 +463,10 @@ class ChatConnectorTests(unittest.TestCase):
         # Inputs:
         # Phase 1: Enter (skip split) -> ""
         # Phase 2: Enter (default storage path) -> ""
-        # Phase 3: "1, 9" (select Cursor and Other) -> "1, 9"
+        # Phase 3: "1, 10" (select Cursor and Other) -> "1, 10"
         # Enter name of custom app -> "MyInvalidIDE"
         # Proceed with installing to valid cursor -> "y"
-        inputs = "\n\n1, 9\nMyInvalidIDE\ny\n"
+        inputs = "\n\n1, 10\nMyInvalidIDE\ny\n"
         
         env = dict(os.environ)
         env["HOME"] = self.tmp
@@ -550,9 +555,9 @@ class ChatConnectorTests(unittest.TestCase):
         from unittest.mock import patch, MagicMock
         import cli
         
-        # Navigate down to other (8 times Down), type "myide", press Backspace, type "es", Enter
+        # Navigate down to other (9 times Down), type "myide", press Backspace, type "es", Enter
         mock_keys = [
-            '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', # Down 8 times
+            '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', '\x1b[B', # Down 9 times
             'm', 'y', 'i', 'd', 'e', # type "myide"
             '\x7f', # Backspace (removes "e")
             'e', 's', # type "es"
@@ -720,6 +725,342 @@ class ChatConnectorTests(unittest.TestCase):
         trae_paths = cli.get_config_paths("trae")
         self.assertTrue(any(".trae" in str(p) and "mcp.json" in str(p) for p in trae_paths))
 
+    def test_security_containment_and_path_traversal(self):
+        from chat_core import sanitize_filename, summarize_text_code_blocks
+        
+        # 1. sanitize_filename tests
+        self.assertEqual(sanitize_filename("../../etc/passwd"), "etc_passwd")
+        self.assertEqual(sanitize_filename("CON"), "_CON")
+        self.assertEqual(sanitize_filename("aux.json"), "_aux.json")
+        self.assertEqual(sanitize_filename("nul"), "_nul")
+        self.assertEqual(sanitize_filename("   ...   "), "untitled")
+        self.assertEqual(sanitize_filename("foo\x00bar"), "foobar")
+        self.assertEqual(sanitize_filename(""), "untitled")
+
+        # 2. _safe_chat_path path traversal blocks
+        self.assertIsNone(self.cc._safe_chat_path("../../etc/passwd"))
+        self.assertIsNone(self.cc._safe_chat_path("..\\..\\etc\\passwd"))
+        self.assertIsNone(self.cc._safe_chat_path("C:\\Windows\\win.ini"))
+        self.assertIsNone(self.cc._safe_chat_path("/etc/passwd"))
+        self.assertIsNone(self.cc._safe_chat_path("evil\x00.json"))
+        self.assertIsNone(self.cc._safe_chat_path("foo/../bar.json"))
+
+        # 3. resolve_chats_dir boundary enforcement
+        # Malicious client names or paths cannot escape base_dir
+        self.cc.maintain_storage(op_type="configure", settings={
+            "client_paths": {"evil": "../../etc", "abs": "/etc"}
+        })
+        self.assertNotIn("evil", self.cc.load_config().get("client_paths", {}))
+        self.assertNotIn("abs", self.cc.load_config().get("client_paths", {}))
+        
+        resolved_evil = self.cc.resolve_chats_dir("../../escape")
+        self.assertTrue(os.path.commonpath([resolved_evil, os.path.abspath(self.cc.base_dir)]) == os.path.abspath(self.cc.base_dir))
+
+        # 4. import_chat_from_local_path outside boundary blocks
+        blocked_import = self.cc.import_chat_from_local_path("/etc/hosts")
+        self.assertIn("Access denied", blocked_import)
+
+        # 5. Markdown export path containment
+        self._write_chat("export_sec.json", [{"role": "user", "content": "hi"}])
+        export_blocked = self.cc.export_chat_as_markdown("export_sec.json", output_name="../../escaped.md")
+        self.assertNotIn("escaped.md", os.listdir(self.cc.base_dir))
+
+        # 6. ReDoS resistance on code block summarization
+        long_unmatched = "```python\n" + ("x" * 1000 + "\n") * 10
+        summarized = summarize_text_code_blocks(long_unmatched)
+        self.assertIn("Code Block", summarized)
+
+    def test_security_staleness_probing_and_file_caps(self):
+        from chat_core import _evaluate_stale_conditions, _resolve_active_receipt
+        
+        # 1. Host probing via stale_if outside workspace must be ignored
+        receipt = {
+            "timestamp": 0.0,
+            "status": "open",
+            "invalidation": {
+                "stale_if": [{"file_path": "/etc/hosts"}, {"file_path": "../../sensitive.txt"}],
+                "next_safe_action": "Do something"
+            }
+        }
+        # /etc/hosts exists and is newer than 0.0, but outside base_dir/cwd, so it must NOT trigger stale condition
+        self.assertFalse(_evaluate_stale_conditions(receipt, self.cc.base_dir))
+
+        resolved = _resolve_active_receipt(receipt, self.cc.base_dir)
+        self.assertEqual(resolved["status"], "open")
+        self.assertEqual(resolved["invalidation"]["next_safe_action"], "Do something")
+
+        # 2. String timestamps (ISO strings) must be handled safely without TypeError
+        receipt_str_ts = {
+            "timestamp": "2026-10-17T00:00:00Z",
+            "status": "open",
+            "invalidation": {
+                "stale_if": [],
+                "next_safe_action": "Proceed"
+            }
+        }
+        self.assertFalse(_evaluate_stale_conditions(receipt_str_ts, self.cc.base_dir))
+
+    def test_search_and_algorithmic_resilience(self):
+        from chat_core import calculate_bm25_score, apply_temporal_decay, _chunk_conversation
+
+        # 1. BM25 cross-client scoping & non-negative IDF
+        term_freqs = {
+            "search": {
+                "client1/doc1.json": 2,
+                "client2/doc2.json": 5,
+                "client2/doc3.json": 3
+            }
+        }
+        doc_lengths = {
+            "client1/doc1.json": 10,
+            "client2/doc2.json": 20,
+            "client2/doc3.json": 15
+        }
+        # Client 1 only has 1 doc, but global term_freqs has 3 docs across all clients
+        bm25_res = calculate_bm25_score(
+            query_terms=["search"],
+            doc_id="client1/doc1.json",
+            term_frequencies=term_freqs,
+            doc_lengths=doc_lengths,
+            n_docs=1
+        )
+        self.assertGreater(bm25_res, 0.0)
+
+        # 2. Temporal decay zero-timestamp underflow prevention
+        self.assertEqual(apply_temporal_decay(1.5, 0.0), 1.5)
+        self.assertEqual(apply_temporal_decay(1.5, -10.0), 1.5)
+
+        # 3. Chunking with 'content' format instead of 'text'
+        raw_msgs = [
+            {"content": f"Message turn {i} about python architecture", "timestamp": 1000 + (i * 10)}
+            for i in range(10)
+        ]
+        chunks = _chunk_conversation(raw_msgs)
+        self.assertGreater(len(chunks), 0)
+
+        # 4. Pagination bounds normalization in read_chat_message_range
+        self._write_chat("page_test.json", [
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "turn 2"}
+        ])
+        # Start message exceeds total
+        res_exceed = self.cc.read_chat_message_range("page_test.json", start_msg=5, end_msg=10)
+        self.assertIn("exceeds total messages", res_exceed)
+
+        # Inverted range start > end should be normalized safely
+        res_inverted = self.cc.read_chat_message_range("page_test.json", start_msg=2, end_msg=1)
+        self.assertIn("Showing Messages 2 to 2", res_inverted)
+
+        # 5. Deduplication in merge_conversation_into_archive
+        self._write_chat("merge_dedup.json", [
+            {"role": "user", "content": "first message"},
+            {"role": "assistant", "content": "second message"}
+        ])
+        # Merging duplicates should not increase count
+        dup_msgs = [
+            {"role": "user", "content": "first message"},
+            {"role": "assistant", "content": "second message"}
+        ]
+        merge_res1 = self.cc.merge_conversation_into_archive("merge_dedup.json", dup_msgs)
+        self.assertIn("Merged 0 messages", merge_res1)
+        self.assertIn("total: 2", merge_res1)
+
+        # Merging one new message should result in total 3
+        new_msg = [{"role": "user", "content": "third novel message"}]
+        merge_res2 = self.cc.merge_conversation_into_archive("merge_dedup.json", new_msg)
+        self.assertIn("Merged 1 messages", merge_res2)
+        self.assertIn("total: 3", merge_res2)
+
+        # 6. Float precision in handoff receipt timestamps
+        self.cc.save_handoff_receipt(
+            obligations={"promise": "Test", "scope": []},
+            work_state={"touched_surfaces": [], "dependencies": []},
+            evidence={"checks_run": [], "missing_evidence": []},
+            invalidation={"stale_if": [], "next_safe_action": "Done"},
+            status="open"
+        )
+        receipt_files = [f for f in os.listdir(self.cc.resolve_chats_dir("default")) if f.startswith("handoff_")]
+        self.assertGreater(len(receipt_files), 0)
+        with open(os.path.join(self.cc.resolve_chats_dir("default"), receipt_files[0]), "r") as f:
+            rec_json = json.load(f)
+            self.assertIsInstance(rec_json["timestamp"], float)
+
+    def test_concurrency_and_storage_resilience(self):
+        import concurrent.futures
+        import cli
+        from pathlib import Path
+
+        # 1. Atomic write-and-replace prevents file truncation on error
+        target_path = os.path.join(self.cc.chats_dir, "atomic_test.json")
+        self.cc._write_json(target_path, {"initial": "data"})
+        self.assertTrue(os.path.exists(target_path))
+        with open(target_path, "r", encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"initial": "data"})
+
+        # Attempt to write non-serializable object (triggers exception inside write)
+        class Unserializable:
+            pass
+
+        with self.assertRaises(TypeError):
+            self.cc._write_json(target_path, {"bad": Unserializable()})
+
+        # Verify original file content is intact and not truncated
+        with open(target_path, "r", encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"initial": "data"})
+
+        # Verify no orphaned temp files remained
+        tmp_files = [f for f in os.listdir(self.cc.chats_dir) if f.startswith(".tmp_chronicle_")]
+        self.assertEqual(len(tmp_files), 0)
+
+        # 2. Handoff receipt exclusion from gzip compression
+        receipt_path = os.path.join(self.cc.chats_dir, "handoff_1234567890_abcdef12.json")
+        with open(receipt_path, "w", encoding="utf-8") as f:
+            json.dump({"receipt_id": "test"}, f)
+        
+        chat_path = os.path.join(self.cc.chats_dir, "normal_chat_archive.json")
+        with open(chat_path, "w", encoding="utf-8") as f:
+            json.dump({"title": "normal"}, f)
+
+        # Set modification time older than 30 days
+        past_60_days = time.time() - (60 * 86400)
+        os.utime(receipt_path, (past_60_days, past_60_days))
+        os.utime(chat_path, (past_60_days, past_60_days))
+
+        comp_res = self.cc.compress_old_chat_archives(days_old=30)
+        self.assertIn("normal_chat_archive.json", comp_res["compressed"])
+        self.assertNotIn("handoff_1234567890_abcdef12.json", comp_res["compressed"])
+        self.assertTrue(os.path.exists(receipt_path))
+        self.assertFalse(os.path.exists(receipt_path + ".gz"))
+
+        # 3. Thread-safe concurrent operations across ChatConnector
+        def worker(thread_id):
+            c_name = f"thread_chat_{thread_id}"
+            msgs = [{"role": "user", "content": f"msg from thread {thread_id}"}]
+            self.cc.save_current_conversation_state(c_name, msgs, force_save=True)
+            self.cc.merge_conversation_into_archive(f"{c_name}.json", [{"role": "assistant", "content": "ack"}])
+            self.cc._sync_serialized_index("default")
+            self.cc.watch_chats_folder("default")
+            return True
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(worker, i) for i in range(10)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+        self.assertEqual(len(results), 10)
+
+        # 4. Config overwrite safeguard in cli.py
+        cfg_file = Path(self.cc.base_dir) / "corrupt_app_config.json"
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            f.write("{ INVALID JSON CONTENT THAT WOULD BE WIPED")
+
+        # Mock get_config_paths to return this corrupt file
+        orig_get_paths = cli.get_config_paths
+        try:
+            cli.get_config_paths = lambda app: [cfg_file]
+            cli.update_json_config("custom_test_app")
+            # Verify backup was created
+            bak_file = cfg_file.with_suffix(cfg_file.suffix + ".bak")
+            self.assertTrue(bak_file.exists())
+            with open(bak_file, "r", encoding="utf-8") as bf:
+                self.assertIn("INVALID JSON", bf.read())
+            # Verify cfg_file was repaired with valid JSON containing chronicle-mcp
+            with open(cfg_file, "r", encoding="utf-8") as cf:
+                data = json.load(cf)
+                self.assertIn("chronicle-mcp", data.get("mcpServers", {}))
+        finally:
+            cli.get_config_paths = orig_get_paths
+
+    def test_phase_4_comprehensive_hardening(self):
+        # 1. Author string attribute handling without AttributeError
+        msgs = [
+            {"author": "user", "text": "hello from user"},
+            {"author": "assistant", "content": "hello from assistant"},
+        ]
+        plain = parse_to_plain_text(msgs)
+        self.assertEqual(plain, ["U: hello from user", "A: hello from assistant"])
+        self.cc.save_current_conversation_state("str_author_test", msgs, force_save=True)
+        merge_res = self.cc.merge_conversation_into_archive("str_author_test.json", msgs)
+        self.assertIn("Merged", merge_res)
+
+        # 2. Handoff DAG: Closed child superseding open parent resolves workspace block
+        r1_res = self.cc.save_handoff_receipt(
+            obligations={"promise": "Parent Task", "scope": ["test.py"]},
+            work_state={"touched_surfaces": []},
+            evidence={"checks_run": []},
+            invalidation={"stale_if": [], "next_safe_action": "Fix parent"},
+            status="open",
+        )
+        # Extract receipt ID from string
+        r1_id = r1_res.split("handoff_")[1].replace(".json", "")
+
+        # Child supersedes parent and is closed
+        self.cc.save_handoff_receipt(
+            obligations={"promise": "Child Task", "scope": ["test.py"]},
+            work_state={"touched_surfaces": []},
+            evidence={"checks_run": []},
+            invalidation={"stale_if": []},
+            status="closed",
+            closure={
+                "closed_by": "tester",
+                "closed_at": "2026-10-17T12:00:00Z",
+                "closure_basis": "verified resolved",
+            },
+            supersedes=f"handoff_{r1_id}",
+        )
+
+        state = self.cc.get_workspace_handoff_state("default")
+        self.assertFalse(state["blocked"], "Closed child must resolve prior open parent obligation")
+        self.assertIsNone(state["blocked_by_receipt"])
+
+        # 3. Deduplicate removes deleted files from .chronicle_index.json
+        payload = json.dumps({"title": "identical_chat", "messages": [{"role": "user", "content": "same content"}]})
+        c1 = os.path.join(self.cc.resolve_chats_dir("default"), "orig_file.json")
+        c2 = os.path.join(self.cc.resolve_chats_dir("default"), "dup_file.json")
+        with open(c1, "w", encoding="utf-8") as f:
+            f.write(payload)
+        with open(c2, "w", encoding="utf-8") as f:
+            f.write(payload)
+        self.cc._sync_serialized_index("default")
+        idx_before = self.cc._load_serialized_index()
+        self.assertIn("default/dup_file__part_1.json", idx_before.get("doc_lengths", {}))
+
+        dedup_res = self.cc.deduplicate_stored_chats(dry_run=False, client="default")
+        self.assertEqual(len(dedup_res["duplicates"]), 1)
+        removed_file = dedup_res["duplicates"][0]["file"]
+        self.assertFalse(os.path.exists(os.path.join(self.cc.resolve_chats_dir("default"), removed_file)))
+
+        idx_after = self.cc._load_serialized_index()
+        stem = removed_file.replace(".json", "")
+        self.assertNotIn(f"default/{stem}__part_1.json", idx_after.get("doc_lengths", {}))
+
+        # 4. Sandboxing sync_agent_transcripts against unauthorized source_dir
+        sync_denied = self.cc.sync_agent_transcripts("cursor", source_dir="/etc")
+        self.assertIn("Access denied", sync_denied.get("error", ""))
+
+        # 5. CLI discover_config_files_by_content handles invalid JSON without TypeError
+        inv_dir = Path(self.tmp) / "search_test"
+        inv_dir.mkdir(parents=True, exist_ok=True)
+        sub_dir = inv_dir / "testapp"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        with open(sub_dir / "broken.json", "w", encoding="utf-8") as f:
+            f.write("CORRUPT JSON NOT A DICT")
+        found = cli.discover_config_files_by_content("testapp", [inv_dir])
+        self.assertEqual(found, [])
+
+        # 6. CLI split_export_file path traversal containment and collision handling
+        exp_file = Path(self.tmp) / "export_test.json"
+        out_split = Path(self.tmp) / "split_out"
+        with open(exp_file, "w", encoding="utf-8") as f:
+            json.dump([
+                {"title": "../../sneaky_traversal", "messages": []},
+                {"title": "Dup Title", "messages": []},
+                {"title": "Dup Title", "messages": []},
+            ], f)
+        cli.split_export_file(exp_file, out_split)
+        self.assertTrue((out_split / "____sneaky_traversal.json").exists() or (out_split / "sneaky_traversal.json").exists())
+        self.assertTrue((out_split / "Dup Title.json").exists() or (out_split / "Dup_Title.json").exists())
+        self.assertTrue((out_split / "Dup Title_1.json").exists() or (out_split / "Dup_Title_1.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
+
