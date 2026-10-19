@@ -35,6 +35,13 @@
 
 Chronicle is a Model Context Protocol (MCP) server that syncs, cleans, formats, and indexes AI chat transcripts entirely on your machine. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
+### What's new in 1.6.1
+* CI on Python 3.10 to 3.13, plus build and `twine check` on every push and pull request.
+* Accurate tool catalog: 8 tools plus the `start_session` prompt, which `maintain_storage(op_type="capabilities")` now reports too.
+* Richer PyPI metadata (project links, keywords, classifiers) and a cleaner repository with no committed build artifacts.
+
+See the full [CHANGELOG](https://github.com/Leviathan0x0/Chronicle-MCP/blob/main/CHANGELOG.md) for earlier releases.
+
 ## Key Architectural Capabilities
 
 ### Format Normalization Engine

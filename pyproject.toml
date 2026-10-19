@@ -48,7 +48,7 @@ Homepage = "https://github.com/Leviathan0x0/Chronicle-MCP"
 Repository = "https://github.com/Leviathan0x0/Chronicle-MCP"
 Issues = "https://github.com/Leviathan0x0/Chronicle-MCP/issues"
 Documentation = "https://github.com/Leviathan0x0/Chronicle-MCP#readme"
-Changelog = "https://github.com/Leviathan0x0/Chronicle-MCP/commits/main"
+Changelog = "https://github.com/Leviathan0x0/Chronicle-MCP/blob/main/CHANGELOG.md"
 
 [project.scripts]
 chronicle = "cli:main"
