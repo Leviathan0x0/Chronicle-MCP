@@ -2402,10 +2402,15 @@ class ChatConnector:
                     "compile_project_insights",
                     "maintain_storage",
                     "manage_session_state",
-                ]
+                ],
+                "handoff": [
+                    "save_handoff_receipt",
+                    "get_handoff_status",
+                ],
             },
+            "prompts": ["start_session"],
             "client_paths": self.load_config().get("client_paths", {}),
-            "total_tools": 6,
+            "total_tools": 8,
         }
 
     def search_history(

@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
-"""Exercise the 6 consolidated polymorphic tools against the live archive."""
+"""Exercise the 8 consolidated MCP tools end to end against a connector archive.
+
+This is a standalone script (``python test_all_tools.py``), not a unittest
+module. It uses the default connector, so set ``CHRONICLE_BASE_DIR`` to a
+scratch directory to avoid touching your real chat archive.
+"""
 
 from __future__ import annotations
+
+import unittest
+
+if __name__ != "__main__":
+    # Imported by `python -m unittest discover`: this file runs its checks at
+    # module level and exits, so skip it there instead of erroring.
+    raise unittest.SkipTest("standalone script; run it directly with `python test_all_tools.py`")
 
 import json
 import os
@@ -173,7 +185,7 @@ dedupe = TEST.maintain_storage(op_type="deduplicate", dry_run=True)
 ok("maintain_storage (deduplicate)", len(dedupe.get("duplicates", [])) >= 1, str(dedupe))
 
 caps = REAL.maintain_storage(op_type="capabilities")
-ok("maintain_storage (capabilities)", caps.get("total_tools") == 6, f"{caps.get('total_tools')} tools")
+ok("maintain_storage (capabilities)", caps.get("total_tools") == 8, f"{caps.get('total_tools')} tools")
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 

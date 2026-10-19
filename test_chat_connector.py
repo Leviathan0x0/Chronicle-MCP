@@ -161,7 +161,7 @@ class ChatConnectorTests(unittest.TestCase):
         self.assertEqual(len(dry["duplicates"]), 1)
 
         caps = self.cc.maintain_storage(op_type="capabilities")
-        self.assertEqual(caps["total_tools"], 6)
+        self.assertEqual(caps["total_tools"], 8)
         self.assertIn("core", caps["tool_categories"])
 
     def test_client_paths(self):

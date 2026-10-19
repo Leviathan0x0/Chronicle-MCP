@@ -1,10 +1,14 @@
-# Chronicle (Universal Chat Connector)
+# Chronicle MCP: Local AI Chat History Search & Memory
+
+**Private, offline memory for your AI coding agents.** Chronicle MCP (`chronicle-mcp-server`) is a local stdio MCP server that indexes your Cursor, Claude, ChatGPT and Cline chat transcripts on your own machine and serves BM25 search over them, so agents can recall past conversations without re-pasting them, using up to 40% fewer context tokens. Your archive and index stay on disk: no cloud service, account, or API key.
 
 <p align="center">
-  <img src="assets/logo.png" alt="Chronicle Logo" style="width: 100%; border-radius: 16px;" />
+  <img src="https://raw.githubusercontent.com/Leviathan0x0/Chronicle-MCP/main/assets/logo.png" alt="Chronicle Logo" style="width: 100%; border-radius: 16px;" />
 </p>
 
 <p align="center">
+  <a href="https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Leviathan0x0/Chronicle-MCP/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
+  ‎ 
   <a href="https://github.com/Leviathan0x0/Chronicle-MCP"><img src="https://img.shields.io/github/stars/Leviathan0x0/Chronicle-MCP?style=flat-square" alt="GitHub Stars" /></a>
   ‎ 
   <a href="https://pypi.org/project/chronicle-mcp-server/"><img src="https://img.shields.io/pypi/v/chronicle-mcp-server?style=flat-square" alt="PyPI Version" /></a>
@@ -29,7 +33,7 @@
   <a href="#license">License</a>
 </p>
 
-Chronicle is a production-grade Model Context Protocol (MCP) server designed to sync, clean, format, and index local artificial intelligence chat transcripts. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
+Chronicle is a Model Context Protocol (MCP) server that syncs, cleans, formats, and indexes AI chat transcripts entirely on your machine. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
 ## Key Architectural Capabilities
 
@@ -47,7 +51,7 @@ Large chat logs can quickly exhaust context windows and increase API costs. Chro
 #### Context Window Token Savings Graph
 To verify these savings, we executed multi-turn conversation benchmarks. The graph below displays total token usage over a sequence of message turns:
 
-![Context Window Token Usage Comparison](assets/token_savings.png)
+![Context Window Token Usage Comparison](https://raw.githubusercontent.com/Leviathan0x0/Chronicle-MCP/main/assets/token_savings.png)
 
 By condensing repetitive syntax and large raw code snippets, Chronicle achieves up to 40 percent token savings, directly lowering API usage costs and preventing context-window exhaustion.
 
@@ -246,7 +250,7 @@ This saves the target path to a local settings file (`~/.chronicle_settings.json
 
 ## Tool Reference Catalog
 
-Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set.
+Chronicle consolidates its behaviors into 8 parameterized tools (six core tools plus two handoff tools) and one prompt, `start_session`. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set.
 
 ### 1. `search_history`
 * **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, Okapi BM25 semantic, date range, and related chat lookups.
@@ -345,13 +349,25 @@ Chronicle consolidates its behaviors into 6 versatile, parameterized tools. This
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ### 7. `save_handoff_receipt`
-* **Description**: Saves a handoff receipt for the current execution to document the active state (touched files, open promises, skipped checks, next safe actions). Saved receipts are indexed and automatically bubbled to the very top of search results.
+* **Description**: Saves a structured handoff receipt that documents the current run's state (obligations, work state, evidence, and the conditions that invalidate it) so the next agent can continue safely. Receipts form a chain through `supersedes`, are indexed, and active receipts are bubbled to the top of search results.
 * **Parameters**:
-  * `touched_files` (list of strings): Paths to files modified during the run.
-  * `open_promises` (list of strings): List of unresolved commitments or tasks left open.
-  * `skipped_checks` (list of strings): List of tests or validation tasks skipped.
-  * `next_safe_action` (str): A clear, direct prompt instructing the next agent on exactly what to do next.
+  * `obligations` (dict): Open promises and commitments left for the next agent.
+  * `work_state` (dict): Current state of the work, such as touched files and progress.
+  * `evidence` (dict): Supporting evidence, such as checks that ran or were skipped.
+  * `invalidation` (dict): Conditions that make the receipt stale (for example, monitored files) and the `next_safe_action` to take.
+  * `status` (str, default: "open"): Receipt status.
+  * `supersedes` (str, optional): ID of the earlier receipt this one replaces.
+  * `closure` (dict, optional): Closure details (`closed_by`, `closed_at`, `closure_basis`, `closure_evidence`) when closing a receipt.
+  * `receipt_id` (str, optional): Explicit receipt ID.
   * `client` (str, default: "default"): Subfolder client identifier.
+
+### 8. `get_handoff_status`
+* **Description**: Returns the current workspace handoff state: the active chain of receipts, whether the workspace is blocked (for example, by files modified after the receipt was written), and the next safe action.
+* **Parameters**:
+  * `client` (str, default: "default"): Subfolder client identifier.
+
+### Prompt: `start_session`
+* **Description**: Returns system instructions that tell the agent to register the conversation with `manage_session_state` (`action="register_auto_save"`) at the start of a chat, so the session is saved automatically.
 
 ## Installation and Configuration
 
@@ -412,14 +428,16 @@ Chronicle contains unit and integration tests to verify platform path resolution
 ### 1. Run Unit Tests
 To execute the suite of unit tests verifying core business logic:
 ```bash
-python3 -m unittest test_chat_connector.py
+python3 -m unittest discover -p "test_*.py"
 ```
 
 ### 2. Run Integration Tests
-To test all 27 tools against the live storage connector:
+To exercise all 8 tools end to end (point `CHRONICLE_BASE_DIR` at a scratch folder so your real archive is untouched):
 ```bash
-python3 test_all_tools.py
+CHRONICLE_BASE_DIR="$(mktemp -d)" python3 test_all_tools.py
 ```
+
+Both run in [CI](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/ci.yml) on Python 3.10 to 3.13, together with a `python -m build` and `twine check` packaging job.
 
 ---
 
@@ -431,7 +449,7 @@ python3 test_all_tools.py
 | **Token Savings** | Up to 40% reduction (Smart code folding and pruning) | None (transfers full history) | None |
 | **Setup Complexity** | 1-click CLI installer (`chronicle add`) | Requires API keys and database configs | High (VecDB setups and loaders) |
 | **Auto-Save Support** | Native via workspace rules and exit hooks | Requires manual application integration | None |
-| **Local Resources** | Minimal CPU and RAM (light TF-IDF) | Heavy | High (vector indexing overhead) |
+| **Local Resources** | Minimal CPU and RAM (lightweight local BM25 index) | Heavy | High (vector indexing overhead) |
 
 ---
 
@@ -442,8 +460,8 @@ We welcome community contributions. To get started:
 2. Write unit tests for new behavior inside `test_chat_connector.py`.
 3. Verify all code changes by running the test suite locally:
    ```bash
-   python3 -m unittest test_chat_connector.py
-   python3 test_all_tools.py
+   python3 -m unittest discover -p "test_*.py"
+   CHRONICLE_BASE_DIR="$(mktemp -d)" python3 test_all_tools.py
    ```
 4. Ensure code formatting is clean and all imports are properly sorted.
 5. Submit a pull request detailing your changes and test coverage.
