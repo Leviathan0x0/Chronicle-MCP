@@ -1,3 +1,0 @@
-chat_core
-chat_server
-cli
