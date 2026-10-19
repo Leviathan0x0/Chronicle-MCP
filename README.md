@@ -473,6 +473,9 @@ We welcome community contributions. To get started:
 4. Ensure code formatting is clean and all imports are properly sorted.
 5. Submit a pull request detailing your changes and test coverage.
 
+### Releasing
+Bump the version in `pyproject.toml` and `server.json`, add a `CHANGELOG.md` entry, then publish a GitHub release tagged `v<version>`. The [publish workflow](.github/workflows/publish.yml) builds the package and uploads it to PyPI through trusted publishing.
+
 ---
 
 ## Public Roadmap
