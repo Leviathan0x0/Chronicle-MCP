@@ -1,0 +1,101 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/schemas/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "chronicle-mcp",
+  "display_name": "Chronicle MCP",
+  "version": "1.6.2",
+  "description": "Local, private AI chat history search & memory: BM25 search over your Cursor, Claude, ChatGPT and Cline transcripts.",
+  "long_description": "Chronicle is a local stdio MCP server that imports, normalizes and indexes your AI chat transcripts (Cursor, Claude, ChatGPT, Cline/Continue) on your own disk and serves BM25 search over them, so agents can recall past work without re-pasting it. It also ships the `start_session` and `recall_past_work` prompts and the `chronicle://capabilities` and `chronicle://chats` resources. No cloud service, account or API key: the archive and index never leave your machine.\n\nThis bundle runs the published PyPI package `chronicle-mcp-server` with `uvx`, so [uv](https://docs.astral.sh/uv/) must be installed. It needs local filesystem access and is not meant for remote hosting.",
+  "author": {
+    "name": "Leviathan",
+    "url": "https://github.com/Leviathan0x0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Leviathan0x0/Chronicle-MCP"
+  },
+  "homepage": "https://github.com/Leviathan0x0/Chronicle-MCP",
+  "documentation": "https://github.com/Leviathan0x0/Chronicle-MCP#readme",
+  "support": "https://github.com/Leviathan0x0/Chronicle-MCP/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "uvx",
+      "args": [
+        "chronicle-mcp-server==1.6.2"
+      ],
+      "env": {
+        "CHRONICLE_BASE_DIR": "${user_config.base_dir}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "search_history",
+      "description": "Search the local chat archive and return matching transcript chunks."
+    },
+    {
+      "name": "get_chat_logs",
+      "description": "List archived chats, or read one chat as a message range, a short summary, or metadata."
+    },
+    {
+      "name": "sync_workspace_data",
+      "description": "Import conversations into the archive from pasted content, a local file, or an editor's transcript folder, normalizing ChatGPT, Claude, Cline/Continue JSON, JSONL and Markdown formats."
+    },
+    {
+      "name": "compile_project_insights",
+      "description": "Derive structured insight from archived chats: action items, a topic index, a two-chat comparison, or a Markdown project brief."
+    },
+    {
+      "name": "maintain_storage",
+      "description": "Housekeeping for the archive: compress old chats, find or remove duplicates, change settings, or report server capabilities."
+    },
+    {
+      "name": "manage_session_state",
+      "description": "Save, auto-save, merge, export or delete archived conversations, and watch the archive for changes."
+    },
+    {
+      "name": "save_handoff_receipt",
+      "description": "Record what this agent run did and what the next agent must do, as a handoff receipt for the current workspace."
+    },
+    {
+      "name": "get_handoff_status",
+      "description": "Check whether this workspace has unfinished work handed off by an earlier agent."
+    }
+  ],
+  "tools_generated": false,
+  "keywords": [
+    "mcp",
+    "ai-memory",
+    "chat-history",
+    "transcript-search",
+    "cursor",
+    "claude",
+    "chatgpt",
+    "cline",
+    "bm25",
+    "local"
+  ],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  },
+  "user_config": {
+    "base_dir": {
+      "type": "string",
+      "title": "Archive folder",
+      "description": "Folder where Chronicle keeps its chat archive and search index (sets CHRONICLE_BASE_DIR). A leading ~ is expanded to your home folder.",
+      "default": "~/.chronicle",
+      "required": false
+    }
+  }
+}

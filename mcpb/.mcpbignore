@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+*.mcpb
+check_bundle.py
