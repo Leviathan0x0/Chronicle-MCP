@@ -13,12 +13,16 @@ concurrency:
 
 jobs:
   test:
-    name: Tests (Python ${{ matrix.python-version }})
+    name: Tests (Python ${{ matrix.python-version }}${{ matrix.mcp && format(', mcp {0}', matrix.mcp) || '' }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # Lowest mcp release allowed by pyproject.toml.
+          - python-version: "3.10"
+            mcp: "1.22.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +36,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install .
 
+      - name: Pin minimum mcp
+        if: matrix.mcp
+        run: python -m pip install "mcp==${{ matrix.mcp }}"
+
       - name: Unit tests
         env:
           CHRONICLE_BASE_DIR: ${{ runner.temp }}/chronicle-unit
@@ -42,6 +50,12 @@ jobs:
           # Isolated scratch archive so the script never depends on local user data.
           CHRONICLE_BASE_DIR: ${{ runner.temp }}/chronicle-tools
         run: python test_all_tools.py
+
+      - name: Live MCP smoke test (installed console script)
+        env:
+          CHRONICLE_BASE_DIR: ${{ runner.temp }}/chronicle-smoke
+        working-directory: ${{ runner.temp }}
+        run: python "$GITHUB_WORKSPACE/smoke_test_live.py" --command chronicle-mcp-server
 
   build:
     name: Build and check distribution
@@ -61,3 +75,31 @@ jobs:
 
       - name: Check metadata
         run: twine check --strict dist/*
+
+  docker:
+    name: Docker image (stdio initialize + tools/list)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t chronicle-mcp:ci .
+
+      - name: initialize + tools/list over stdio
+        run: |
+          # Keep stdin open briefly: on EOF the SDK cancels requests still in flight.
+          { printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'; sleep 3; } \
+            | timeout 60 docker run -i --rm chronicle-mcp:ci > responses.jsonl
+          python3 - <<'PY'
+          import json
+          responses = {r["id"]: r for r in map(json.loads, open("responses.jsonl")) if "id" in r}
+          info = responses[1]["result"]["serverInfo"]
+          tools = responses[2]["result"]["tools"]
+          print(info["name"], info["version"], "-", len(tools), "tools")
+          assert info["name"] == "Chronicle MCP", info
+          assert len(tools) == 8, [t["name"] for t in tools]
+          assert all(t.get("annotations") and t.get("description") for t in tools)
+          PY

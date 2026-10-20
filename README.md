@@ -35,6 +35,13 @@
 
 Chronicle is a Model Context Protocol (MCP) server that syncs, cleans, formats, and indexes AI chat transcripts entirely on your machine. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
+### What's new in 1.6.2
+* **Fixes fresh installs.** Earlier releases let pip install mcp 2.x, which the server cannot run on. The dependency is now `mcp>=1.22,<2`.
+* **Rewritten tool definitions.** Every tool has a title, a description of what it does and when to use it, side effects and return value, and annotations (`readOnlyHint`, `destructiveHint`, ...). Every parameter is documented and every operation selector is an enum.
+* **Real error results.** Failures now come back with `isError: true`, and unknown operation names are rejected instead of silently running a different operation.
+* **New ways to run it:** `uvx chronicle-mcp-server`, `chronicle serve`, `chronicle --version` and a [Dockerfile](#docker).
+* **Server instructions, a `recall_past_work` prompt, and two resources:** `chronicle://capabilities` and `chronicle://chats`.
+
 ### What's new in 1.6.1
 * CI on Python 3.10 to 3.13, plus build and `twine check` on every push and pull request.
 * Accurate tool catalog: 8 tools plus the `start_session` prompt, which `maintain_storage(op_type="capabilities")` now reports too.
@@ -257,7 +264,20 @@ This saves the target path to a local settings file (`~/.chronicle_settings.json
 
 ## Tool Reference Catalog
 
-Chronicle consolidates its behaviors into 8 parameterized tools (six core tools plus two handoff tools) and one prompt, `start_session`. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set.
+Chronicle consolidates its behaviors into 8 parameterized tools (six core tools plus two handoff tools), two prompts and two resources. This design avoids cognitive overhead for client AI models while preserving the server's complete feature set. Everything runs locally: no tool contacts the network (`openWorldHint: false`).
+
+| Tool | Title | Read-only | Destructive | Idempotent |
+| :--- | :--- | :---: | :---: | :---: |
+| `search_history` | Search Chat History | yes | no | yes |
+| `get_chat_logs` | Read Chat Logs | yes | no | yes |
+| `get_handoff_status` | Get Handoff Status | yes | no | yes |
+| `sync_workspace_data` | Import Chats | no | no | no |
+| `compile_project_insights` | Compile Project Insights | no | no | yes |
+| `save_handoff_receipt` | Save Handoff Receipt | no | no | no |
+| `maintain_storage` | Maintain Storage | no | yes (`deduplicate` with `dry_run=false`) | yes |
+| `manage_session_state` | Manage Session State | no | yes (`delete` with `confirm=true`) | no |
+
+**Validation and errors.** The operation selectors (`method`, `view_type`, `source_type`, `insight_type`, `op_type`, `action`) are enums, and counts such as `limit`, `top_k`, `page` and `per_page` must be at least 1. Invalid values are rejected before the tool runs. Execution failures, such as a missing chat file, an invalid date or a missing required argument for the chosen operation, are returned as MCP results with `isError: true` and a message explaining what to fix.
 
 ### 1. `search_history`
 * **Description**: Unified search and filter interface for local chat transcripts. Supports keyword, Okapi BM25 semantic, date range, and related chat lookups.
@@ -271,8 +291,8 @@ Chronicle consolidates its behaviors into 8 parameterized tools (six core tools 
   * `keywords` (list of strings, optional): Optional list of keywords for keyword search.
   * `start_date` (str, optional): Start date string (YYYY-MM-DD) for date range filtering.
   * `end_date` (str, optional): End date string (YYYY-MM-DD) for date range filtering.
-  * `limit` (int, default: 50): Maximum result count for keyword or date range searches.
-  * `top_k` (int, default: 10): Maximum matches for semantic or related chat searches.
+  * `limit` (int ≥ 1, default: 50): Maximum result count for keyword or date range searches.
+  * `top_k` (int ≥ 1, default: 10): Maximum matches for semantic or related chat searches.
   * `client` (str, default: "default"): Subfolder client identifier.
   * `file_name` (str, optional): Reference chat filename for related search.
 
@@ -284,12 +304,12 @@ Chronicle consolidates its behaviors into 8 parameterized tools (six core tools 
     * `content`: Message text slice within specified index ranges.
     * `metadata`: File statistics including message counts and modification dates.
     * `summary`: Structural summary highlighting the opener and closer context.
-  * `start_msg` (int, default: 1): Message slice start index (1-indexed).
-  * `end_msg` (int, default: 20): Message slice end index.
+  * `start_msg` (int ≥ 1, default: 1): Message slice start index (1-indexed).
+  * `end_msg` (int ≥ 1, default: 20): Message slice end index.
   * `max_msg_len` (int, default: 1000): Character limit for messages to prevent token inflation. Set to 0 for unlimited.
   * `summarize_code` (bool, default: True): Summarizes markdown code blocks into metadata headers.
-  * `page` (int, default: 1): Page index for folder listing (used when `chat_id` is omitted).
-  * `per_page` (int, default: 50): Page result limit for folder listing.
+  * `page` (int ≥ 1, default: 1): Page index for folder listing (used when `chat_id` is omitted).
+  * `per_page` (int ≥ 1, default: 50): Page result limit for folder listing.
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ### 3. `sync_workspace_data`
@@ -303,7 +323,7 @@ Chronicle consolidates its behaviors into 8 parameterized tools (six core tools 
   * `payload` (str, dict, or list, optional): Input data payload (raw JSON text, file path on disk, or folder path).
   * `title` (str, optional): Target file name or title for imports.
   * `source_dir` (str, optional): Override folder directory for scanning transcripts.
-  * `limit` (int, default: 50): Maximum files to synchronize.
+  * `limit` (int ≥ 1, default: 50): Maximum files to synchronize.
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ### 4. `compile_project_insights`
@@ -332,7 +352,7 @@ Chronicle consolidates its behaviors into 8 parameterized tools (six core tools 
     * `configure`: Updates auto-save message limits, paths, and transcripts.
     * `capabilities`: Returns server meta-capabilities and client configurations.
   * `settings` (dict, optional): Settings payload dict (for configure).
-  * `days_old` (int, optional): Cutoff threshold age in days for compression.
+  * `days_old` (int ≥ 1, optional): Cutoff threshold age in days for compression (default 30).
   * `dry_run` (bool, default: True): Lists duplicates without performing deletions.
   * `client` (str, default: "default"): Subfolder client identifier.
 
@@ -365,7 +385,8 @@ Chronicle consolidates its behaviors into 8 parameterized tools (six core tools 
   * `status` (str, default: "open"): Receipt status.
   * `supersedes` (str, optional): ID of the earlier receipt this one replaces.
   * `closure` (dict, optional): Closure details (`closed_by`, `closed_at`, `closure_basis`, `closure_evidence`) when closing a receipt.
-  * `receipt_id` (str, optional): Explicit receipt ID.
+  * `receipt_id` (str, optional): Explicit receipt ID. If omitted, one is generated.
+* **Returns**: the saved file name and its `receipt_id`, which a later receipt passes as `supersedes`.
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ### 8. `get_handoff_status`
@@ -374,7 +395,17 @@ Chronicle consolidates its behaviors into 8 parameterized tools (six core tools 
   * `client` (str, default: "default"): Subfolder client identifier.
 
 ### Prompt: `start_session`
+* **Title**: Start a Chronicle Session
 * **Description**: Returns system instructions that tell the agent to register the conversation with `manage_session_state` (`action="register_auto_save"`) at the start of a chat, so the session is saved automatically.
+
+### Prompt: `recall_past_work`
+* **Title**: Recall Past Work
+* **Arguments**: `topic` (str): what to look up, such as "the auth refactor".
+* **Description**: Walks the agent through checking `get_handoff_status`, searching with `search_history`, and reading the best hits with `get_chat_logs` using small message ranges.
+
+### Resources
+* `chronicle://capabilities` (JSON): the same server capabilities report as `maintain_storage(op_type="capabilities")`.
+* `chronicle://chats` (text): the first page of archived chat files, as `get_chat_logs` lists them.
 
 ## Installation and Configuration
 
@@ -387,8 +418,34 @@ chronicle setup
 
 ### System Prerequisites
 * Python 3.10 or higher.
-* Python packages `mcp` (Model Context Protocol SDK).
+* Python package `mcp` 1.22 or later, below 2.0 (the Model Context Protocol SDK; installed automatically).
 * Python `setuptools` (for installation as a package).
+
+### Run the Server Directly
+MCP clients start Chronicle over stdio. Any of these commands works as the server command in a client config:
+```bash
+uvx chronicle-mcp-server          # no install needed
+chronicle-mcp-server              # after pip install chronicle-mcp-server
+chronicle serve                   # same server, through the main CLI
+chronicle --version
+```
+
+Environment variables (all optional):
+
+| Variable | Purpose |
+| :--- | :--- |
+| `CHRONICLE_BASE_DIR` | Archive folder (default `~/.chronicle`). Takes precedence over the folder saved by `chronicle setup`. |
+| `TRANSCRIPTS_DIR` | Extra transcript folder for `sync_workspace_data(source_type="agent_transcripts")`. |
+| `CHRONICLE_LOG_LEVEL` | stderr log level (default `WARNING`). |
+| `CHRONICLE_AUTO_CONFIGURE_RULES` | Set to `1` to write the session-registration rule into workspace rule files on startup. |
+
+### Docker
+The image runs the same stdio server, with the archive in a `/data` volume:
+```bash
+docker build -t chronicle-mcp .
+docker run -i --rm -v "$HOME/.chronicle:/data" chronicle-mcp
+```
+Always pass `-i`, because MCP traffic goes over stdin and stdout. In a client config, use `docker` as the command and `["run", "-i", "--rm", "-v", "/path/to/archive:/data", "chronicle-mcp"]` as the arguments. Inside a container Chronicle can only see the folders you mount, so importing editor transcripts also needs those folders mounted (and `TRANSCRIPTS_DIR` pointed at them).
 
 ### Manual Installation
 1. Clone the repository:
@@ -415,10 +472,13 @@ Since editors (like Cursor or VS Code) do not notify MCP servers when a chat win
 ### 1. Process Exit Handler (Automatic Flush)
 The Chronicle server includes an exit handler registered via Python's `atexit` module. When you close a chat tab or close the editor, the editor terminates the stdio connection, shutting down the Chronicle process. Upon receiving this shutdown trigger, the server automatically flushes the registered pending session to the local chats folder.
 
-### 2. Automatic Workspace Rules Generation
-For this flush to succeed, the active chat session must be registered during the conversation. Chronicle handles this setup automatically: upon server startup, it checks the active project workspace root directory and automatically creates or appends the required rules to all major rule files (such as `.cursorrules`, `.clinerules`, `.windsurfrules`, `.clauderules`, etc.).
+### 2. Workspace Rules Generation (Opt-in)
+For this flush to succeed, the active chat session must be registered during the conversation. There are two ways to tell the agent to do that:
 
-This ensures that the AI agent is automatically instructed to register the session at the start of the chat. The generated rule states:
+* Use the `start_session` prompt, or rely on the server instructions, which MCP clients pass to the model.
+* Opt in to rule files by setting `CHRONICLE_AUTO_CONFIGURE_RULES=1` in the server environment. On startup Chronicle then creates or appends the rule in the active workspace's rule files (such as `.cursorrules`, `.clinerules`, `.windsurfrules` and `.clauderules`). This is off by default, so the server never writes into your projects unless you ask it to.
+
+The rule states:
 
 ```text
 At the beginning of the chat session, you must call the "manage_session_state" tool with action="register_auto_save" to register this conversation. Provide a descriptive title based on the user's initial prompt. As the conversation progresses, periodically update the registration payload to keep it current.
@@ -444,7 +504,14 @@ To exercise all 8 tools end to end (point `CHRONICLE_BASE_DIR` at a scratch fold
 CHRONICLE_BASE_DIR="$(mktemp -d)" python3 test_all_tools.py
 ```
 
-Both run in [CI](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/ci.yml) on Python 3.10 to 3.13, together with a `python -m build` and `twine check` packaging job.
+### 3. MCP Introspection and Live Smoke Test
+`test_mcp_introspection.py` runs as part of the unit tests. It starts the server over stdio and fails if any tool, parameter, prompt or resource loses its description, title or annotations, if errors stop setting `isError`, or if version numbers drift apart. `smoke_test_live.py` runs read-only checks against your real archive, or against any server command:
+```bash
+python3 smoke_test_live.py
+python3 smoke_test_live.py --command docker run -i --rm -v "$HOME/.chronicle:/data" chronicle-mcp
+```
+
+All of these run in [CI](https://github.com/Leviathan0x0/Chronicle-MCP/actions/workflows/ci.yml) on Python 3.10 to 3.13, plus a run against the minimum supported mcp release (1.22), a `python -m build` and `twine check` packaging job, and a Docker job. The Docker job builds the image and checks `initialize` and `tools/list` over stdio.
 
 ---
 

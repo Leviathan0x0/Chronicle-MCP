@@ -3,6 +3,57 @@
 All notable changes to Chronicle MCP (`chronicle-mcp-server`) are documented here.
 Entries before 1.6.1 are summarized from the existing GitHub releases and git tags.
 
+## [1.6.2] - Unreleased
+
+Tool-quality release driven by a full audit against Glama's TDQS rubric, Smithery's quality score and the MCP
+spec. Tool names, parameters and defaults are unchanged.
+
+### Fixed
+- **The server failed to start on fresh installs.** `mcp>=1.0.0` resolved to mcp 2.x, which removed
+  `mcp.server.fastmcp`. The dependency is now `mcp>=1.22,<2`.
+- Tool execution errors (for example a missing chat file, an invalid date, or a failed import) now come back
+  as MCP results with `isError: true` instead of looking like successful output. The Python
+  `ChatConnector` API is unchanged.
+- Unknown operation names no longer silently run a different operation. For example,
+  `maintain_storage(op_type="bogus")` used to return capabilities and an unknown `insight_type` used to write
+  a project brief. They are now rejected with a validation error, and the same applies to zero or negative
+  counts.
+- Two handoff receipts saved within the same second no longer overwrite each other. A numeric suffix is
+  added on collision. The save result now also reports the `receipt_id` to use in `supersedes`.
+- Topic tagging matches whole words, so "build" no longer tags a chat as `ui_design`.
+- An explicitly set `CHRONICLE_BASE_DIR` now takes precedence over the folder saved in
+  `~/.chronicle_settings.json`.
+- `serverInfo` now reports name "Chronicle MCP" and Chronicle's own version; it used to report the mcp SDK
+  version.
+- `search_history` was registered twice.
+- A leading `~` in `CHRONICLE_BASE_DIR` or `TRANSCRIPTS_DIR` is now expanded to your home folder.
+
+### Added
+- Rewritten descriptions for all 8 tools: what each does, when to use it instead of its siblings, side
+  effects, and what it returns.
+- Descriptions on every parameter (56), enum constraints on every operation selector, lower bounds on
+  counts, and the expected keys of the handoff-receipt objects.
+- Tool titles and annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
+- Server `instructions`, a `recall_past_work(topic)` prompt, a title for `start_session`, and two resources:
+  `chronicle://capabilities` and `chronicle://chats`.
+- An output schema for `get_handoff_status`.
+- `chronicle-mcp-server` console script and `chronicle serve`, which always start the stdio server (so
+  `uvx chronicle-mcp-server` works), plus `chronicle --version`.
+- `Dockerfile` and `.dockerignore` for Glama and other container-based inspectors, and a `smithery.yaml` for
+  local stdio installs.
+- `test_mcp_introspection.py`: starts the server over stdio and fails if any tool, parameter, prompt or
+  resource loses its description, title or annotations, if errors stop setting `isError`, or if versions
+  drift. CI also builds the Docker image and runs `initialize` and `tools/list` against it.
+- `CHRONICLE_LOG_LEVEL` (default `WARNING`), which replaces the per-request INFO lines on stderr.
+
+### Changed
+- `smoke_test_live.py` is now a read-only live check over MCP that exits non-zero on failure. It used to
+  call core methods without assertions and write exports and index files.
+- `server.json`: added title, website URL, icon, `runtimeHint: uvx` and the optional environment variables,
+  and removed fields the registry schema does not define.
+- README: the tool reference documents annotations and enums, the Docker and `serve` usage, and the fact
+  that workspace rule files are opt-in (`CHRONICLE_AUTO_CONFIGURE_RULES=1`).
+
 ## [1.6.1] - 2026-10-19
 
 Discoverability, CI, and repository cleanup ([#3](https://github.com/Leviathan0x0/Chronicle-MCP/pull/3)). No changes to search or storage behavior.
@@ -66,6 +117,7 @@ Versions 1.0.x to 1.1.x were published to [PyPI](https://pypi.org/project/chroni
 
 Note: the git tags `v1.0.0` to `v1.0.3` correspond to package versions 1.5.0 to 1.5.3. From `v1.6.0` on, tag names match package versions.
 
+[1.6.2]: https://github.com/Leviathan0x0/Chronicle-MCP/compare/v1.6.1...HEAD
 [1.6.1]: https://github.com/Leviathan0x0/Chronicle-MCP/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/Leviathan0x0/Chronicle-MCP/releases/tag/v1.6.0
 [1.5.3]: https://github.com/Leviathan0x0/Chronicle-MCP/compare/v1.0.2...v1.0.3
