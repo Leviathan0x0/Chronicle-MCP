@@ -28,7 +28,7 @@ WINDOWS_RESERVED = {
 
 def get_default_base_dir() -> str:
     if os.environ.get("CHRONICLE_BASE_DIR"):
-        return os.environ["CHRONICLE_BASE_DIR"]
+        return os.path.expanduser(os.environ["CHRONICLE_BASE_DIR"])
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if os.path.exists(os.path.join(script_dir, ".git")):
         return script_dir
@@ -37,7 +37,7 @@ def get_default_base_dir() -> str:
 
 def resolve_default_transcripts_dir(client: str) -> str:
     if os.environ.get("TRANSCRIPTS_DIR"):
-        return os.environ["TRANSCRIPTS_DIR"]
+        return os.path.expanduser(os.environ["TRANSCRIPTS_DIR"])
     home = os.path.expanduser("~")
     if client == "cursor":
         cursor_projects_dir = os.path.join(home, ".cursor", "projects")
@@ -173,6 +173,8 @@ def parse_external_transcript(file_path: str) -> list[dict] | None:
             return None
     return None
 
+
+__version__ = "1.6.2"
 
 DEFAULT_BASE_DIR = get_default_base_dir()
 DEFAULT_CURSOR_TRANSCRIPTS = resolve_default_transcripts_dir("cursor")
@@ -751,6 +753,11 @@ def _is_part_of_file(doc_key: str, file_name: str, client: str) -> bool:
         return orig_file == file_name
     return False
 
+
+
+def _contains_keyword(text: str, keyword: str) -> bool:
+    """Match a topic keyword as a whole word or phrase, so 'ui' does not match 'build'."""
+    return re.search(r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])", text) is not None
 
 
 class ChatConnector:
@@ -2169,7 +2176,7 @@ class ChatConnector:
                     content = f.read().lower()
                 tagged = False
                 for topic, keywords in TOPIC_KEYWORDS.items():
-                    if any(kw in content for kw in keywords):
+                    if any(_contains_keyword(content, kw) for kw in keywords):
                         index[topic].append(file)
                         tagged = True
                 if not tagged:
@@ -2392,7 +2399,8 @@ class ChatConnector:
 
     def get_server_capabilities(self) -> dict:
         return {
-            "server": "Universal Chat Connector",
+            "server": "Chronicle MCP",
+            "version": __version__,
             "transports": ["stdio"],
             "tool_categories": {
                 "core": [
@@ -2408,7 +2416,8 @@ class ChatConnector:
                     "get_handoff_status",
                 ],
             },
-            "prompts": ["start_session"],
+            "prompts": ["start_session", "recall_past_work"],
+            "resources": ["chronicle://capabilities", "chronicle://chats"],
             "client_paths": self.load_config().get("client_paths", {}),
             "total_tools": 8,
         }
@@ -2620,11 +2629,18 @@ class ChatConnector:
             now_ts = time.time()
             timestamp_int = int(now_ts)
             workspace_hash = hashlib.md5(self.base_dir.encode("utf-8")).hexdigest()[:8]
-            if not receipt_id:
-                receipt_id = f"{workspace_hash}_{timestamp_int}"
-                
             file_name = f"handoff_{timestamp_int}_{workspace_hash}.json"
             file_path = os.path.join(chats_dir, file_name)
+            suffix = ""
+            # Two receipts saved within the same second must not overwrite each other.
+            n = 1
+            while os.path.exists(file_path):
+                suffix = f"_{n}"
+                file_name = f"handoff_{timestamp_int}_{workspace_hash}{suffix}.json"
+                file_path = os.path.join(chats_dir, file_name)
+                n += 1
+            if not receipt_id:
+                receipt_id = f"{workspace_hash}_{timestamp_int}{suffix}"
             
             touched_str = "\n".join(
                 f"- {s.get('file_path', '')}: {s.get('summary', '')} ({s.get('why', '')})"
@@ -2690,7 +2706,7 @@ class ChatConnector:
             # Trigger index sync to immediately index the new handoff receipt
             self._sync_serialized_index(client)
             
-            return f"Handoff receipt saved successfully to {file_name}"
+            return f"Handoff receipt saved successfully to {file_name} (receipt_id: {receipt_id})"
 
     def get_workspace_handoff_state(self, client: str = "default") -> dict:
         import os

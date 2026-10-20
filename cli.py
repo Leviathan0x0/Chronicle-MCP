@@ -31,7 +31,8 @@ if SETTINGS_FILE_PATH.exists():
     try:
         with open(SETTINGS_FILE_PATH, "r", encoding="utf-8") as f:
             _settings = json.load(f)
-        if isinstance(_settings, dict) and CHATS_FOLDER_KEY in _settings:
+        # An explicitly set CHRONICLE_BASE_DIR wins over the saved settings file.
+        if isinstance(_settings, dict) and CHATS_FOLDER_KEY in _settings and not os.environ.get("CHRONICLE_BASE_DIR"):
             os.environ["CHRONICLE_BASE_DIR"] = str(_settings[CHATS_FOLDER_KEY])
     except (json.JSONDecodeError, IOError, Exception):
         pass
@@ -1297,6 +1298,7 @@ def main():
         return
 
     parser = argparse.ArgumentParser(description="Chronicle MCP Command Line Interface")
+    parser.add_argument("--version", action="version", version=f"chronicle-mcp-server {_package_version()}")
     parser.add_argument(
         "--chats-folder",
         type=str,
@@ -1332,6 +1334,11 @@ def main():
     # Subcommand: setup
     subparsers.add_parser("setup", help="Run the interactive setup wizard")
 
+    # Subcommand: serve
+    subparsers.add_parser(
+        "serve", help="Run the MCP stdio server (also the default when stdin is not a terminal)"
+    )
+
     args = parser.parse_args()
 
     if args.chats_folder:
@@ -1348,20 +1355,28 @@ def main():
         run_setup_wizard()
         return
 
-    import atexit
+    serve()
 
+
+def serve():
+    """Run the MCP stdio server regardless of whether stdin is a terminal.
+
+    Entry point for the ``chronicle-mcp-server`` console script and ``chronicle serve``.
+    """
     import chat_server
 
-    def flush_on_exit():
-        try:
-            from chat_core import get_connector
+    chat_server.run()
 
-            get_connector().trigger_auto_save_on_session_end()
-        except Exception:
-            pass
 
-    atexit.register(flush_on_exit)
-    chat_server.mcp.run()
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("chronicle-mcp-server")
+    except Exception:
+        from chat_core import __version__
+
+        return __version__
 
 
 if __name__ == "__main__":
