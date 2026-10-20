@@ -1,24 +1,44 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Leviathan0x0/chronicle-mcp",
-  "description": "Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens.",
+  "title": "Chronicle MCP",
+  "description": "Local, private AI chat history search & memory: BM25 over your Cursor, Claude and ChatGPT chats.",
   "repository": {
     "url": "https://github.com/Leviathan0x0/Chronicle-MCP",
     "source": "github"
   },
-  "version": "1.6.1",
-  "license": "MIT",
+  "websiteUrl": "https://github.com/Leviathan0x0/Chronicle-MCP",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Leviathan0x0/Chronicle-MCP/main/assets/logo.png",
+      "mimeType": "image/png"
+    }
+  ],
+  "version": "1.6.2",
   "packages": [
     {
       "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
       "identifier": "chronicle-mcp-server",
-      "version": "1.6.1",
+      "version": "1.6.2",
+      "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
       },
-      "installation": {
-        "uv": "uvx --from git+https://github.com/Leviathan0x0/Chronicle-MCP chronicle"
-      }
+      "environmentVariables": [
+        {
+          "name": "CHRONICLE_BASE_DIR",
+          "description": "Folder for the chat archive and search index. Defaults to ~/.chronicle (or the folder saved with chronicle --chats-folder).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "TRANSCRIPTS_DIR",
+          "description": "Override folder scanned by sync_workspace_data(source_type='agent_transcripts'). Defaults to each editor's own transcript folder.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
     }
   ]
 }
