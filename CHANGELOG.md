@@ -3,7 +3,7 @@
 All notable changes to Chronicle MCP (`chronicle-mcp-server`) are documented here.
 Entries before 1.6.1 are summarized from the existing GitHub releases and git tags.
 
-## [1.6.2] - Unreleased
+## [1.6.2] - 2026-10-20
 
 Tool-quality release driven by a full audit against Glama's TDQS rubric, Smithery's quality score and the MCP
 spec. Tool names, parameters and defaults are unchanged.
