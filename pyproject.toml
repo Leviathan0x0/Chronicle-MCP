@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chronicle-mcp-server"
-version = "1.6.1"
-description = "Local MCP server to sync, clean, and index AI chat logs locally. Saves up to 40% context tokens."
+version = "1.6.2"
+description = "Local, private AI chat history search & memory MCP server: BM25 search over Cursor, Claude, ChatGPT and Cline transcripts. Saves up to 40% context tokens."
 readme = "README.md"
 authors = [{ name = "Leviathan" }]
 license = "MIT"
@@ -40,7 +40,9 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.0.0",
+    # mcp 2.x removed mcp.server.fastmcp; 1.22 is the oldest 1.x that works with current pydantic.
+    "mcp>=1.22,<2",
+    "typing_extensions>=4.6",
 ]
 
 [project.urls]
@@ -52,6 +54,7 @@ Changelog = "https://github.com/Leviathan0x0/Chronicle-MCP/blob/main/CHANGELOG.m
 
 [project.scripts]
 chronicle = "cli:main"
+chronicle-mcp-server = "cli:serve"
 
 [tool.setuptools]
 py-modules = ["chat_server", "chat_core", "cli"]

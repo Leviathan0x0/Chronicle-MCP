@@ -1,1 +1,2 @@
-mcp>=1.0.0
+mcp>=1.22,<2
+typing_extensions>=4.6
