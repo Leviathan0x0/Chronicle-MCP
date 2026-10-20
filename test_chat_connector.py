@@ -989,8 +989,8 @@ class ChatConnectorTests(unittest.TestCase):
             invalidation={"stale_if": [], "next_safe_action": "Fix parent"},
             status="open",
         )
-        # Extract receipt ID from string
-        r1_id = r1_res.split("handoff_")[1].replace(".json", "")
+        # The save result reports the receipt_id that 'supersedes' must reference.
+        r1_id = r1_res.split("(receipt_id: ")[1].rstrip(")")
 
         # Child supersedes parent and is closed
         self.cc.save_handoff_receipt(
@@ -1004,7 +1004,7 @@ class ChatConnectorTests(unittest.TestCase):
                 "closed_at": "2026-10-17T12:00:00Z",
                 "closure_basis": "verified resolved",
             },
-            supersedes=f"handoff_{r1_id}",
+            supersedes=r1_id,
         )
 
         state = self.cc.get_workspace_handoff_state("default")
