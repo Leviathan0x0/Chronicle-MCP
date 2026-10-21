@@ -103,3 +103,37 @@ jobs:
           assert len(tools) == 8, [t["name"] for t in tools]
           assert all(t.get("annotations") and t.get("description") for t in tools)
           PY
+
+  mcpb:
+    name: MCP bundle (validate + pack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Check manifest against the package and server
+        env:
+          CHRONICLE_BASE_DIR: ${{ runner.temp }}/chronicle-mcpb
+        run: python mcpb/check_bundle.py
+
+      - name: Validate and pack
+        run: |
+          npx --yes @anthropic-ai/mcpb@2.1.2 validate mcpb/manifest.json
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack mcpb chronicle-mcp.mcpb
+          npx --yes @anthropic-ai/mcpb@2.1.2 info chronicle-mcp.mcpb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chronicle-mcp-mcpb
+          path: chronicle-mcp.mcpb
+          if-no-files-found: error

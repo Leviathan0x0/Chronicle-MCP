@@ -452,6 +452,13 @@ docker run -i --rm -v "$HOME/.chronicle:/data" chronicle-mcp
 ```
 Always pass `-i`, because MCP traffic goes over stdin and stdout. In a client config, use `docker` as the command and `["run", "-i", "--rm", "-v", "/path/to/archive:/data", "chronicle-mcp"]` as the arguments. Inside a container Chronicle can only see the folders you mount, so importing editor transcripts also needs those folders mounted (and `TRANSCRIPTS_DIR` pointed at them).
 
+### MCP Bundle (Claude Desktop, Smithery)
+`mcpb/` holds an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb) manifest for one-click installs in clients that support `.mcpb` files and for the Smithery registry. The bundle is a thin wrapper: it runs the pinned PyPI release with `uvx`, so [uv](https://docs.astral.sh/uv/) must be installed. Build it with:
+```bash
+npx @anthropic-ai/mcpb pack mcpb chronicle-mcp.mcpb
+```
+CI validates the manifest and uploads the packed bundle as the `chronicle-mcp-mcpb` artifact on every run.
+
 ### Manual Installation
 1. Clone the repository:
    ```bash
@@ -546,7 +553,7 @@ We welcome community contributions. To get started:
 5. Submit a pull request detailing your changes and test coverage.
 
 ### Releasing
-Bump the version in `pyproject.toml` and `server.json`, add a `CHANGELOG.md` entry, then publish a GitHub release tagged `v<version>`. The [publish workflow](.github/workflows/publish.yml) builds the package and uploads it to PyPI through trusted publishing.
+Bump the version in `pyproject.toml`, `server.json`, `mcpb/manifest.json` (`version` and the pinned `mcp_config.args`) and `mcpb/server/main.py`, add a `CHANGELOG.md` entry, then publish a GitHub release tagged `v<version>`. The [publish workflow](.github/workflows/publish.yml) builds the package and uploads it to PyPI through trusted publishing.
 
 ---
 
