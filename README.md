@@ -35,6 +35,11 @@
 
 Chronicle is a Model Context Protocol (MCP) server that syncs, cleans, formats, and indexes AI chat transcripts entirely on your machine. By bridging the gap between local editor history and large language model contexts, Chronicle allows agents to search, compare, retrieve, and reference past conversation logs. It features optimized token-saving heuristics that compress code blocks and limit message lengths, reducing context window utilization by up to 40 percent.
 
+## Listed on
+
+[![Chronicle MCP server](https://mcprush.com/badge/chronicle-mcp/card.svg)](https://mcprush.com/to/chronicle-mcp?ref=badge)
+
+
 ### What's new in 1.6.2
 * **Fixes fresh installs.** Earlier releases let pip install mcp 2.x, which the server cannot run on. The dependency is now `mcp>=1.22,<2`.
 * **Rewritten tool definitions.** Every tool has a title, a description of what it does and when to use it, side effects and return value, and annotations (`readOnlyHint`, `destructiveHint`, ...). Every parameter is documented and every operation selector is an enum.
