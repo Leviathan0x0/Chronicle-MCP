@@ -3,6 +3,17 @@
 All notable changes to Chronicle MCP (`chronicle-mcp-server`) are documented here.
 Entries before 1.6.1 are summarized from the existing GitHub releases and git tags.
 
+## [Unreleased]
+
+### Added
+- `mcpb/`: an MCP Bundle (`.mcpb`) manifest, icon and launcher for Smithery's local (stdio) listing and other
+  MCPB clients. The bundle runs the pinned PyPI release with `uvx`. A new CI job checks the manifest against
+  the package version and the server's tools, validates it with the MCPB CLI and uploads the packed bundle.
+
+### Removed
+- `smithery.yaml`. Smithery no longer publishes stdio servers from a `startCommand`/`commandFunction` config;
+  local servers are published as MCPB bundles.
+
 ## [1.6.2] - 2026-10-20
 
 Tool-quality release driven by a full audit against Glama's TDQS rubric, Smithery's quality score and the MCP
