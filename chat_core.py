@@ -72,9 +72,20 @@ def resolve_default_transcripts_dir(client: str) -> str:
         return os.path.join(home, ".cline-transcripts")
     elif client == "copilot":
         return os.path.join(home, ".copilot-transcripts")
+    elif client == "antigravity":
+        return os.path.join(home, ".gemini", "antigravity", "brain")
     safe_client = re.sub(r"[^a-zA-Z0-9_-]", "_", client)
     return os.path.join(home, f".{safe_client}-transcripts")
 
+
+
+def _extract_antigravity_user_content(raw: str) -> str:
+    match = re.search(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", raw, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    cleaned = re.sub(r"<ADDITIONAL_METADATA>.*?</ADDITIONAL_METADATA>", "", raw, flags=re.DOTALL)
+    cleaned = re.sub(r"<USER_SETTINGS_CHANGE>.*?</USER_SETTINGS_CHANGE>", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 def parse_external_transcript(file_path: str) -> list[dict] | None:
@@ -97,6 +108,19 @@ def parse_external_transcript(file_path: str) -> list[dict] | None:
                         continue
                     entry = json.loads(line)
                     if isinstance(entry, dict):
+                        step_type = entry.get("type")
+                        if step_type in ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") and (
+                            "step_index" in entry or entry.get("source") in ("USER_EXPLICIT", "MODEL", "SYSTEM")
+                        ):
+                            if step_type == "USER_INPUT":
+                                content = _extract_antigravity_user_content(str(entry.get("content") or ""))
+                                if content:
+                                    messages.append({"role": "user", "content": content})
+                            elif step_type == "PLANNER_RESPONSE":
+                                content = str(entry.get("content") or "").strip()
+                                if content:
+                                    messages.append({"role": "assistant", "content": content})
+                            continue
                         role = entry.get("role") or entry.get("sender") or "user"
                         content = entry.get("content") or entry.get("text") or ""
                         if content:
@@ -2075,23 +2099,44 @@ class ChatConnector:
             }
         imported = []
         errors = []
+        scan_items: list[tuple[str, str, str]] = []
         try:
-            candidates = sorted(
-                [f for f in os.listdir(src_dir) if f.endswith((".json", ".jsonl", ".md"))],
-                key=lambda f: os.path.getmtime(os.path.join(src_dir, f)),
-                reverse=True,
-            )[:limit]
+            if client == "antigravity":
+                for entry_name in os.listdir(src_dir):
+                    nested_transcript = os.path.join(
+                        src_dir, entry_name, ".system_generated", "logs", "transcript.jsonl"
+                    )
+                    if os.path.isfile(nested_transcript):
+                        scan_items.append(
+                            (nested_transcript, f"{entry_name}/transcript.jsonl", f"antigravity_{entry_name[:40]}")
+                        )
+            if not scan_items:
+                for f in os.listdir(src_dir):
+                    if not f.endswith((".json", ".jsonl", ".md")):
+                        continue
+                    src_path = os.path.join(src_dir, f)
+                    if client == "antigravity" and f == "transcript.jsonl":
+                        parent_logs = os.path.basename(src_dir)
+                        parent_sys = os.path.basename(os.path.dirname(src_dir))
+                        if parent_logs == "logs" and parent_sys == ".system_generated":
+                            session_id = os.path.basename(os.path.dirname(os.path.dirname(src_dir)))
+                            title = f"antigravity_{session_id[:40]}"
+                        else:
+                            title = f"{client}_{os.path.splitext(f)[0][:40]}"
+                    else:
+                        title = f"{client}_{os.path.splitext(f)[0][:40]}"
+                    scan_items.append((src_path, f, title))
+            scan_items.sort(key=lambda item: os.path.getmtime(item[0]), reverse=True)
+            scan_items = scan_items[:limit]
         except Exception as e:
             return {"error": f"Failed to list transcripts: {e}", "imported": []}
-        for file in candidates:
-            src_path = os.path.join(src_dir, file)
+        for src_path, file, title in scan_items:
             if not os.path.isfile(src_path) or os.path.getsize(src_path) > MAX_FILE_SIZE:
                 continue
             try:
                 messages = parse_external_transcript(src_path)
                 if not messages:
                     continue
-                title = f"{client}_{os.path.splitext(file)[0][:40]}"
                 dest_name = sanitize_filename(title)
                 chats_dir = self.resolve_chats_dir(client)
                 dest = os.path.join(chats_dir, f"{dest_name}.json")
@@ -2120,7 +2165,7 @@ class ChatConnector:
                 })
             except Exception as e:
                 errors.append({"file": file, "error": str(e)})
-        return {"imported": imported, "errors": errors, "total_scanned": len(candidates)}
+        return {"imported": imported, "errors": errors, "total_scanned": len(scan_items)}
 
     def sync_cursor_agent_transcripts(self, limit: int = 50) -> dict:
         """Deprecated: use sync_agent_transcripts(client='cursor') instead."""
@@ -2166,7 +2211,9 @@ class ChatConnector:
                     return index
             except Exception:
                 pass
-        index: dict[str, list[str]] = {topic: [] for topic in TOPIC_KEYWORDS}
+        config = self.load_config()
+        active_topics: dict[str, list[str]] = config.get("topic_keywords") or TOPIC_KEYWORDS
+        index: dict[str, list[str]] = {topic: [] for topic in active_topics}
         index["untagged"] = []
         chats_dir = self.resolve_chats_dir(client)
         for file in self._list_json_files(client):
@@ -2175,7 +2222,7 @@ class ChatConnector:
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read().lower()
                 tagged = False
-                for topic, keywords in TOPIC_KEYWORDS.items():
+                for topic, keywords in active_topics.items():
                     if any(_contains_keyword(content, kw) for kw in keywords):
                         index[topic].append(file)
                         tagged = True
@@ -2302,6 +2349,7 @@ class ChatConnector:
             "summary_pruning_days_threshold",
             "cursor_transcripts_dir",
             "transcripts_dirs",
+            "topic_keywords",
         }
         updates = {k: v for k, v in settings.items() if k in allowed}
         if not updates:
@@ -2335,6 +2383,28 @@ class ChatConnector:
                 val = updates[num_key]
                 if not isinstance(val, int) or val <= 0:
                     del updates[num_key]
+
+        if "topic_keywords" in updates:
+            raw_topics = updates["topic_keywords"]
+            if not isinstance(raw_topics, dict):
+                return "Error: topic_keywords must be a dictionary mapping topic names to lists of keyword strings."
+            clean_topics: dict[str, list[str]] = {}
+            for topic_name, kw_list in raw_topics.items():
+                if not isinstance(topic_name, str) or not topic_name.strip():
+                    continue
+                if not isinstance(kw_list, list):
+                    continue
+                cleaned_kws = [
+                    kw.strip().lower()
+                    for kw in kw_list
+                    if isinstance(kw, str) and kw.strip()
+                ]
+                if cleaned_kws:
+                    clean_topics[topic_name.strip()] = cleaned_kws
+            if clean_topics:
+                updates["topic_keywords"] = clean_topics
+            else:
+                del updates["topic_keywords"]
 
         if not updates:
             return "No valid settings could be applied after validation."

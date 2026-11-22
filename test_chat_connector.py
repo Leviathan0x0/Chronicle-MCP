@@ -1060,6 +1060,98 @@ class ChatConnectorTests(unittest.TestCase):
         self.assertTrue((out_split / "Dup Title.json").exists() or (out_split / "Dup_Title.json").exists())
         self.assertTrue((out_split / "Dup Title_1.json").exists() or (out_split / "Dup_Title_1.json").exists())
 
+    def test_antigravity_transcript_sync_and_parsing(self):
+        from chat_core import parse_external_transcript, resolve_default_transcripts_dir
+
+        self.assertTrue(
+            resolve_default_transcripts_dir("antigravity").endswith(
+                os.path.join(".gemini", "antigravity", "brain")
+            )
+        )
+
+        brain_dir = os.path.join(self.tmp, "antigravity_brain")
+        session_a = os.path.join(brain_dir, "afa69d0b-7701-4956-b4df-fe4615a4ed54", ".system_generated", "logs")
+        session_b = os.path.join(brain_dir, "c90bb16c-d415-4b41-b7c3-4fb8801b58f3", ".system_generated", "logs")
+        os.makedirs(session_a, exist_ok=True)
+        os.makedirs(session_b, exist_ok=True)
+
+        t_a = os.path.join(session_a, "transcript.jsonl")
+        with open(t_a, "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "source": "USER_EXPLICIT",
+                "content": "<USER_REQUEST>\nhello antigravity\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nnoise\n</ADDITIONAL_METADATA>",
+            }) + "\n")
+            f.write(json.dumps({
+                "step_index": 1,
+                "type": "PLANNER_RESPONSE",
+                "source": "MODEL",
+                "content": "",
+                "tool_calls": [{"name": "read_file"}],
+            }) + "\n")
+            f.write(json.dumps({
+                "step_index": 2,
+                "type": "GENERIC",
+                "source": "MODEL",
+                "content": "raw tool output should be ignored",
+            }) + "\n")
+            f.write(json.dumps({
+                "step_index": 3,
+                "type": "PLANNER_RESPONSE",
+                "source": "MODEL",
+                "content": "Hi there!",
+            }) + "\n")
+
+        t_b = os.path.join(session_b, "transcript.jsonl")
+        with open(t_b, "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "source": "USER_EXPLICIT",
+                "content": "<USER_REQUEST>\nsecond session\n</USER_REQUEST>",
+            }) + "\n")
+            f.write(json.dumps({
+                "step_index": 1,
+                "type": "PLANNER_RESPONSE",
+                "source": "MODEL",
+                "content": "Second reply!",
+            }) + "\n")
+
+        parsed = parse_external_transcript(t_a)
+        self.assertEqual(parsed, [
+            {"role": "user", "content": "hello antigravity"},
+            {"role": "assistant", "content": "Hi there!"},
+        ])
+
+        sync_res = self.cc.sync_agent_transcripts("antigravity", source_dir=brain_dir, limit=10)
+        self.assertEqual(sync_res["total_scanned"], 2)
+        dests = {item["dest"] for item in sync_res["imported"] if item.get("status") == "imported"}
+        self.assertEqual(dests, {
+            "antigravity_afa69d0b-7701-4956-b4df-fe4615a4ed54.json",
+            "antigravity_c90bb16c-d415-4b41-b7c3-4fb8801b58f3.json",
+        })
+
+    def test_configurable_topic_keywords(self):
+        self.cc.save_current_conversation_state(
+            "custom-topic-chat",
+            [{"role": "user", "content": "Deploying FastAPI with PostgreSQL and Alembic migrations."}],
+            force_save=True,
+        )
+        cfg_res = self.cc.configure_connector_settings({
+            "topic_keywords": {
+                "database": ["postgresql", "alembic"],
+                "web_api": ["fastapi"],
+            }
+        })
+        self.assertIn("topic_keywords", cfg_res)
+
+        summary = self.cc.build_knowledge_index(rebuild=True, summary_only=True)
+        self.assertEqual(summary.get("database"), 1)
+        self.assertEqual(summary.get("web_api"), 1)
+        self.assertNotIn("roblox", summary)
+        self.assertNotIn("school", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

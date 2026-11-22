@@ -267,7 +267,7 @@ def get_chat_logs(
         "source_type 'raw_content': payload is the chat JSON (string or object); 'local_path': payload is a "
         "file path inside the archive, the current directory, the temp directory or a configured transcripts "
         "folder (other paths are refused); 'agent_transcripts': scans the transcripts folder for 'client' "
-        "('cursor', 'continue', 'cline', 'copilot', or source_dir) and imports up to 'limit' newest files, "
+        "('cursor', 'continue', 'cline', 'copilot', 'antigravity', or source_dir) and imports up to 'limit' newest files, "
         "skipping ones already imported; 'cursor_agent_transcripts' is a deprecated alias for Cursor.\n"
         "Writes new JSON files into the archive and updates the search index; never deletes. Imports with "
         "an existing title overwrite that chat. Returns a confirmation string for single imports, or "
@@ -297,7 +297,7 @@ def sync_workspace_data(
         Field(
             description=(
                 "Archive namespace to import into; for 'agent_transcripts' it also picks the source editor "
-                "('cursor', 'continue', 'cline', 'copilot'). Omit for 'default'."
+                "('cursor', 'continue', 'cline', 'copilot', 'antigravity'). Omit for 'default'."
             )
         ),
     ] = "default",
@@ -396,7 +396,8 @@ def maintain_storage(
                 "For 'configure' only. Allowed keys: auto_save_message_threshold (int, messages before "
                 "manage_session_state save persists), compression_days_threshold (int), "
                 "summary_pruning_days_threshold (int), client_paths (object: client name to a relative folder), "
-                "transcripts_dirs (object: client name to a folder), cursor_transcripts_dir (string). "
+                "transcripts_dirs (object: client name to a folder), cursor_transcripts_dir (string), "
+                "topic_keywords (object: topic name to list of keyword strings). "
                 "Unknown keys are ignored."
             )
         ),
