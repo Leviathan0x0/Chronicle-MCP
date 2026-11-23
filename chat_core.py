@@ -109,7 +109,7 @@ def parse_external_transcript(file_path: str) -> list[dict] | None:
                     entry = json.loads(line)
                     if isinstance(entry, dict):
                         step_type = entry.get("type")
-                        if step_type in ("USER_INPUT", "PLANNER_RESPONSE", "GENERIC") and (
+                        if isinstance(step_type, str) and (
                             "step_index" in entry or entry.get("source") in ("USER_EXPLICIT", "MODEL", "SYSTEM")
                         ):
                             if step_type == "USER_INPUT":
@@ -2116,10 +2116,11 @@ class ChatConnector:
                         continue
                     src_path = os.path.join(src_dir, f)
                     if client == "antigravity" and f == "transcript.jsonl":
-                        parent_logs = os.path.basename(src_dir)
-                        parent_sys = os.path.basename(os.path.dirname(src_dir))
+                        norm_src_dir = os.path.normpath(src_dir)
+                        parent_logs = os.path.basename(norm_src_dir)
+                        parent_sys = os.path.basename(os.path.dirname(norm_src_dir))
                         if parent_logs == "logs" and parent_sys == ".system_generated":
-                            session_id = os.path.basename(os.path.dirname(os.path.dirname(src_dir)))
+                            session_id = os.path.basename(os.path.dirname(os.path.dirname(norm_src_dir)))
                             title = f"antigravity_{session_id[:40]}"
                         else:
                             title = f"{client}_{os.path.splitext(f)[0][:40]}"
@@ -2384,33 +2385,61 @@ class ChatConnector:
                 if not isinstance(val, int) or val <= 0:
                     del updates[num_key]
 
+        reset_topic_keywords = False
         if "topic_keywords" in updates:
             raw_topics = updates["topic_keywords"]
             if not isinstance(raw_topics, dict):
                 return "Error: topic_keywords must be a dictionary mapping topic names to lists of keyword strings."
-            clean_topics: dict[str, list[str]] = {}
-            for topic_name, kw_list in raw_topics.items():
-                if not isinstance(topic_name, str) or not topic_name.strip():
-                    continue
-                if not isinstance(kw_list, list):
-                    continue
-                cleaned_kws = [
-                    kw.strip().lower()
-                    for kw in kw_list
-                    if isinstance(kw, str) and kw.strip()
-                ]
-                if cleaned_kws:
-                    clean_topics[topic_name.strip()] = cleaned_kws
-            if clean_topics:
-                updates["topic_keywords"] = clean_topics
-            else:
+            if not raw_topics:
                 del updates["topic_keywords"]
+                reset_topic_keywords = True
+            else:
+                clean_topics: dict[str, list[str]] = {}
+                for topic_name, kw_list in raw_topics.items():
+                    if not isinstance(topic_name, str) or not topic_name.strip():
+                        continue
+                    cleaned_name = topic_name.strip()
+                    if cleaned_name.lower() == "untagged":
+                        continue
+                    if not isinstance(kw_list, list):
+                        continue
+                    cleaned_kws = [
+                        kw.strip().lower()
+                        for kw in kw_list
+                        if isinstance(kw, str) and kw.strip()
+                    ]
+                    if cleaned_kws:
+                        clean_topics[cleaned_name] = cleaned_kws
+                if not clean_topics:
+                    return (
+                        "Error: topic_keywords contained no valid entries "
+                        "(note: 'untagged' is reserved and each topic needs a non-empty list of keyword strings)."
+                    )
+                updates["topic_keywords"] = clean_topics
 
-        if not updates:
+        if not updates and not reset_topic_keywords:
             return "No valid settings could be applied after validation."
 
-        self.save_config(updates)
-        return f"Updated settings: {list(updates.keys())}"
+        if reset_topic_keywords:
+            with self._lock:
+                config = self.load_config()
+                config.pop("topic_keywords", None)
+                config.update(updates)
+                self._write_json(self.config_path, config)
+        else:
+            self.save_config(updates)
+
+        if "topic_keywords" in updates or reset_topic_keywords:
+            if os.path.exists(self.index_path):
+                try:
+                    os.remove(self.index_path)
+                except OSError:
+                    pass
+
+        updated_keys = list(updates.keys())
+        if reset_topic_keywords:
+            updated_keys.append("topic_keywords")
+        return f"Updated settings: {updated_keys}"
 
     def compress_old_chat_archives(self, days_old: int | None = None, client: str = "default") -> dict:
         with self._lock:

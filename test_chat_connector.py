@@ -1098,6 +1098,12 @@ class ChatConnectorTests(unittest.TestCase):
             }) + "\n")
             f.write(json.dumps({
                 "step_index": 3,
+                "type": "SYSTEM_EVENT",
+                "source": "SYSTEM",
+                "content": "unknown antigravity step should be ignored",
+            }) + "\n")
+            f.write(json.dumps({
+                "step_index": 4,
                 "type": "PLANNER_RESPONSE",
                 "source": "MODEL",
                 "content": "Hi there!",
@@ -1132,25 +1138,57 @@ class ChatConnectorTests(unittest.TestCase):
             "antigravity_c90bb16c-d415-4b41-b7c3-4fb8801b58f3.json",
         })
 
+        session_c = os.path.join(brain_dir, "d11cc27d-e526-4c52-c8d4-5fc9912c69a4", ".system_generated", "logs")
+        os.makedirs(session_c, exist_ok=True)
+        with open(os.path.join(session_c, "transcript.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "source": "USER_EXPLICIT",
+                "content": "<USER_REQUEST>\ndirect logs dir\n</USER_REQUEST>",
+            }) + "\n")
+        direct_res = self.cc.sync_agent_transcripts("antigravity", source_dir=session_c + os.sep, limit=10)
+        self.assertEqual(direct_res["total_scanned"], 1)
+        self.assertEqual(
+            direct_res["imported"][0]["dest"],
+            "antigravity_d11cc27d-e526-4c52-c8d4-5fc9912c69a4.json",
+        )
+
     def test_configurable_topic_keywords(self):
         self.cc.save_current_conversation_state(
             "custom-topic-chat",
             [{"role": "user", "content": "Deploying FastAPI with PostgreSQL and Alembic migrations."}],
             force_save=True,
         )
+        invalid_res = self.cc.configure_connector_settings({
+            "topic_keywords": {"empty": [], "untagged": ["ignored"]}
+        })
+        self.assertTrue(invalid_res.startswith("Error:"))
+
+        # Build initial default index so we can verify cache invalidation on update
+        initial_summary = self.cc.build_knowledge_index(rebuild=True, summary_only=True)
+        self.assertIn("roblox", initial_summary)
+
         cfg_res = self.cc.configure_connector_settings({
             "topic_keywords": {
                 "database": ["postgresql", "alembic"],
                 "web_api": ["fastapi"],
+                "untagged": ["should-be-skipped"],
             }
         })
         self.assertIn("topic_keywords", cfg_res)
 
-        summary = self.cc.build_knowledge_index(rebuild=True, summary_only=True)
+        summary = self.cc.build_knowledge_index(rebuild=False, summary_only=True)
         self.assertEqual(summary.get("database"), 1)
         self.assertEqual(summary.get("web_api"), 1)
         self.assertNotIn("roblox", summary)
         self.assertNotIn("school", summary)
+
+        reset_res = self.cc.configure_connector_settings({"topic_keywords": {}})
+        self.assertIn("topic_keywords", reset_res)
+        reset_summary = self.cc.build_knowledge_index(rebuild=False, summary_only=True)
+        self.assertIn("roblox", reset_summary)
+        self.assertNotIn("database", reset_summary)
 
 
 if __name__ == "__main__":
